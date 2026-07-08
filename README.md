@@ -31,13 +31,13 @@ hours reacts to it.
 
 Before any model, the number to beat is **seasonal naive**: assume this hour
 will be the same as the same hour, same weekday, last week. It's one line and
-it's annoyingly good, because electricity demand is very habitual — weekdays
+it's annoyingly good, because electricity demand is very habitual; weekdays
 look like weekdays, weekends like weekends. If a model can't beat "just copy
 last week", it isn't doing anything.
 
 So the real question the whole project answers is: can a model beat
 copy-last-week, and by how much? The metric I use for that is the skill score,
-`1 - MAE_model / MAE_baseline` — the share of the baseline's error that the
+`1 - MAE_model / MAE_baseline`, the share of the baseline's error that the
 model removes. 0 means no better than copying last week.
 
 ## Results
@@ -54,11 +54,11 @@ Trained on 2015–2017, tuned on 2018, and tested once on 2019 to Sep 2020.
 
 Gradient boosting cut the baseline's error roughly in half (2,416 -> 1,220 MW).
 Ridge on the same features got about halfway there. Worth noting the "yesterday"
-row is the worst of all — that's the point of using seasonal naive instead of a
+row is the worst of all, that's the point of using seasonal naive instead of a
 plain 24-hour lag, since a Saturday looks nothing like the Friday before it.
 
 Ridge barely changed across regularisation strengths (alpha 0.1 to 100), which
-makes sense — with ~50k rows and 20 features there's not much overfitting for it
+makes sense; with ~50k rows and 20 features there's not much overfitting for it
 to fix. I kept the tuning small on purpose.
 
 ## Where it goes wrong
@@ -68,13 +68,13 @@ interesting bit is the worst individual days:
 
 | date | MAE (MW) | what happened |
 |---|---:|---|
-| 2019-06-20 | 8,212 | Corpus Christi — a holiday in some German states but not all |
+| 2019-06-20 | 8,212 | Corpus Christi - a holiday in some German states but not all |
 | 2020-06-11 | 7,820 | Corpus Christi again |
 | 2019-04-21 | 4,771 | Easter Sunday |
 | 2020-04-09 | 4,385 | COVID demand drop |
 | 2020-04-12 | 3,981 | Easter / COVID |
 
-Two things break it. Regional holidays it can't see — Corpus Christi is only a
+Two things break it. Regional holidays it can't see: Corpus Christi is only a
 public holiday in some states, so it's not in my (national) holiday list and the
 model treats it as a normal working day. And spring 2020, which is COVID, and no
 model trained on 2015–2018 was going to see that coming. Both of those are
