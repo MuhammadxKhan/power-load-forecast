@@ -1,0 +1,17 @@
+# the full OPSD file is ~94MB. data/de_hourly.csv is the three columns this
+# project needs, ~2MB, and IS committed - so cloning is enough to run it.
+opsd_60min.csv
+
+# raw ERA5 is ~1GB of NetCDF. The derived era5_temp_de.csv is small and SHOULD
+# be committed once generated, so the weather results run without a Copernicus
+# account too.
+era5_raw/
+
+# results_scores.csv, results_backtest.csv, results_predictions.csv and
+# figures/*.png are NOT ignored. They are committed on purpose - without them
+# nobody can check the numbers in the README.
+
+__pycache__/
+*.pyc
+.venv/
+.cdsapirc
