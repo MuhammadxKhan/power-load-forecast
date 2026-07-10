@@ -46,3 +46,54 @@ BBOX = {"north": 55.0, "south": 47.0, "west": 5.5, "east": 15.5}
 ACTUAL_COL = "DE_load_actual_entsoe_transparency"
 BENCH_COL = "DE_load_forecast_entsoe_transparency"
 
+
+# --------------------------------------------------------------------------
+# demand
+# --------------------------------------------------------------------------
+def load_frame():
+    """Actual German load and the published benchmark, hourly, indexed by UTC."""
+    # data/de_hourly.csv is three columns pulled out of the full OPSD file and
+    # committed, so cloning the repo is enough to run this - no 94MB download,
+    # no account, nothing. The full-file path below is what generated it and is
+    # kept so the extract is reproducible rather than a magic artefact.
+    if os.path.exists(OPSD_EXTRACT):
+        df = pd.read_csv(OPSD_EXTRACT, parse_dates=["utc_timestamp"])
+        df = df.set_index("utc_timestamp")
+    else:
+        if not os.path.exists(OPSD_CACHE):
+            print(f"Downloading OPSD {OPSD_VERSION} (~94MB, one-off)...")
+            pd.read_csv(OPSD_URL, low_memory=False).to_csv(OPSD_CACHE, index=False)
+            print(f"Cached to {OPSD_CACHE}")
+        df = pd.read_csv(OPSD_CACHE, usecols=["utc_timestamp", ACTUAL_COL, BENCH_COL],
+                         parse_dates=["utc_timestamp"]).set_index("utc_timestamp")
+        df = df.rename(columns={ACTUAL_COL: "load_mw", BENCH_COL: "benchmark_mw"})
+        os.makedirs(os.path.dirname(OPSD_EXTRACT), exist_ok=True)
+        df.to_csv(OPSD_EXTRACT)
+        print(f"Wrote {OPSD_EXTRACT} - commit this and nobody needs the download")
+
+    df.index = pd.DatetimeIndex(df.index).tz_convert("UTC")
+
+    s = df["load_mw"]
+    df = df.loc[s.first_valid_index():s.last_valid_index()]
+
+    # every hour must exist, or "168 rows back" stops meaning "168 hours back"
+    # and every lag silently misaligns
+    df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq="h", tz="UTC"))
+
+    missing = int(df["load_mw"].isna().sum())
+    if missing:
+        print(f"{missing} missing load hours ({missing / len(df):.3%}) - "
+              "filling from earlier values")
+    df["load_mw"] = _fill_gaps(df["load_mw"])
+
+    # The benchmark is deliberately NOT filled. Filling it would invent forecast
+    # values nobody ever published and then score models against them. Missing
+    # stays missing; evaluate.py drops the benchmark if the scored window has
+    # holes, and says so.
+    gaps = int(df["benchmark_mw"].isna().sum())
+    if gaps:
+        print(f"{gaps} missing benchmark hours ({gaps / len(df):.3%}) - left as NaN")
+
+    df.index.name = "timestamp"
+    return df
+
