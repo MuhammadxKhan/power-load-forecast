@@ -97,3 +97,21 @@ def load_frame():
     df.index.name = "timestamp"
     return df
 
+
+def _fill_gaps(s):
+    """Fill interior gaps from earlier values only. A LEADING gap is the one
+    exception and gets filled backwards, because there is nothing earlier.
+
+    The obvious thing is interpolate(), and that's what I had. But linear
+    interpolation fills a hole from the valid values on BOTH sides, weighted by
+    position, so the filled number carries information from the future - and a
+    lag_24h feature a day later would then be built on data only 18 hours old,
+    breaking the 24-hour rule everything here rests on.
+
+    On the pinned OPSD package the German load series has NO missing hours once
+    it's trimmed to its first and last valid reading, so on this data it changes
+    nothing at all. It's here because the code shouldn't depend on the data
+    happening to be clean.
+    """
+    return s.ffill().bfill()
+
