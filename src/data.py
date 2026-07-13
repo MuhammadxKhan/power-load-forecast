@@ -115,3 +115,41 @@ def _fill_gaps(s):
     """
     return s.ffill().bfill()
 
+
+# --------------------------------------------------------------------------
+# synthetic, for the self-checks only
+# --------------------------------------------------------------------------
+def fake_frame(n_days=1500, seed=0):
+    """Synthetic load. Numbers are meaningless - do NOT report them. It exists
+    so the checks run without the download."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2016-01-01", periods=n_days * 24, freq="h", tz="UTC")
+    loc = idx.tz_convert("Europe/Berlin")
+    hour, dow, doy = loc.hour.to_numpy(), loc.dayofweek.to_numpy(), loc.dayofyear.to_numpy()
+
+    daily = 8000 * np.sin((hour - 3) / 24 * 2 * np.pi) + 3000 * np.sin(hour / 12 * 2 * np.pi)
+    weekly = np.where(dow >= 5, -6000, 0)
+    yearly = 5000 * np.cos((doy - 15) / 365 * 2 * np.pi)
+    load = 50000 + daily + weekly + yearly + rng.normal(0, 900, len(idx))
+
+    # a fake benchmark that's decent but beatable, so the comparison machinery
+    # has something to chew on
+    return pd.DataFrame({"load_mw": load,
+                         "benchmark_mw": load + rng.normal(0, 1800, len(idx))},
+                        index=idx).rename_axis("timestamp")
+
+
+def fake_temperature(index, seed=0):
+    """Synthetic German-ish temperature: seasonal swing, daily swing, and a slow
+    random wander so consecutive days correlate the way real weather does."""
+    rng = np.random.default_rng(seed)
+    idx = pd.DatetimeIndex(index)
+    loc = idx.tz_convert("Europe/Berlin")
+
+    seasonal = 9.5 - 9.0 * np.cos((loc.dayofyear.to_numpy() - 20) / 365 * 2 * np.pi)
+    diurnal = 3.5 * np.sin((loc.hour.to_numpy() - 9) / 24 * 2 * np.pi)
+    wander = (pd.Series(rng.normal(0, 1.0, len(idx)))
+              .rolling(72, min_periods=1).mean() * 6.0).to_numpy()
+
+    return pd.Series(seasonal + diurnal + wander, index=idx,
+                     name="temp_c").rename_axis("timestamp")
