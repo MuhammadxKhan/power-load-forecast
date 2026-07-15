@@ -53,7 +53,29 @@ TZ = "Europe/Berlin"
 # So this measures the cost of temperature error UNDER THIS IMPOSED ERROR MODEL,
 # and nothing more. 1.0 is a plausible order of magnitude for day-ahead 2m
 # temperature, not a measured value for any particular model or region.
+HOLIDAYS = {
+    "2015-01-01", "2015-04-03", "2015-04-06", "2015-05-01", "2015-05-14",
+    "2015-05-25", "2015-10-03", "2015-12-25", "2015-12-26",
+    "2016-01-01", "2016-03-25", "2016-03-28", "2016-05-01", "2016-05-05",
+    "2016-05-16", "2016-10-03", "2016-12-25", "2016-12-26",
+    "2017-01-01", "2017-04-14", "2017-04-17", "2017-05-01", "2017-05-25",
+    "2017-06-05", "2017-10-03", "2017-10-31", "2017-12-25", "2017-12-26",
+    "2018-01-01", "2018-03-30", "2018-04-02", "2018-05-01", "2018-05-10",
+    "2018-05-21", "2018-10-03", "2018-12-25", "2018-12-26",
+    "2019-01-01", "2019-04-19", "2019-04-22", "2019-05-01", "2019-05-30",
+    "2019-06-10", "2019-10-03", "2019-12-25", "2019-12-26",
+    "2020-01-01", "2020-04-10", "2020-04-13", "2020-05-01", "2020-05-21",
+    "2020-06-01", "2020-10-03", "2020-12-25", "2020-12-26",
+}
+
 def _cyclical(values, period):
     r = 2 * np.pi * values / period
     return np.sin(r), np.cos(r)
+
+
+def _as_utc(t):
+    """Accept "2019-01-01" or an already-tz-aware Timestamp. the backtest in evaluate.py
+    builds its fold boundaries by date arithmetic, so they arrive already aware."""
+    t = pd.Timestamp(t)
+    return t.tz_localize("UTC") if t.tz is None else t.tz_convert("UTC")
 
