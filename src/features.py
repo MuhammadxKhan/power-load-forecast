@@ -39,6 +39,7 @@ weekday on about 7% of them.
 import numpy as np
 import pandas as pd
 
+LAGS = [24, 48, 72, 168, 336]
 TZ = "Europe/Berlin"
 
 # Size of the synthetic error injected by weather_mode="noisy", degrees C.
