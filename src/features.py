@@ -74,6 +74,49 @@ def _cyclical(values, period):
     return np.sin(r), np.cos(r)
 
 
+def build_features(load, temp=None, weather_mode="none", seed=0):
+    df = pd.DataFrame({"load_mw": load})
+    idx = df.index
+    loc = idx.tz_convert(TZ)   # German clocks, not UTC
+
+    df["hour"] = loc.hour
+    df["dayofweek"] = loc.dayofweek
+    df["month"] = loc.month
+    df["is_weekend"] = (loc.dayofweek >= 5).astype(int)
+    df["is_holiday"] = loc.strftime("%Y-%m-%d").isin(HOLIDAYS).astype(int)
+
+    df["hour_sin"], df["hour_cos"] = _cyclical(loc.hour.to_numpy(), 24)
+    df["dow_sin"], df["dow_cos"] = _cyclical(loc.dayofweek.to_numpy(), 7)
+    df["doy_sin"], df["doy_cos"] = _cyclical(loc.dayofyear.to_numpy(), 365)
+
+    for lag in LAGS:
+        df[f"lag_{lag}h"] = df["load_mw"].shift(lag)
+
+    past = df["load_mw"].shift(24)  # everything rolls off the 24h-lagged series
+    df["roll_mean_24h"] = past.rolling(24).mean()
+    df["roll_mean_168h"] = past.rolling(168).mean()
+    df["roll_std_24h"] = past.rolling(24).std()
+
+    df["same_hour_3wk_mean"] = (
+        df["load_mw"].shift(168) + df["load_mw"].shift(336) + df["load_mw"].shift(504)
+    ) / 3
+
+    t = usable_temperature(temp, weather_mode, seed)
+    if t is not None:
+        t = t.reindex(idx)
+        df["temp_c"] = t
+        df["hdh"], df["cdh"] = degree_hours(t)
+        # buildings have thermal inertia - today's demand responds to the last
+        # day of weather, not just this instant
+        df["temp_roll_mean_24h"] = t.rolling(24).mean()
+        # warming or cooling relative to the same hour yesterday
+        df["temp_change_24h"] = t - t.shift(24)
+
+    df = df.dropna()
+    y = df.pop("load_mw")
+    return df, y
+
+
 def _as_utc(t):
     """Accept "2019-01-01" or an already-tz-aware Timestamp. the backtest in evaluate.py
     builds its fold boundaries by date arithmetic, so they arrive already aware."""
