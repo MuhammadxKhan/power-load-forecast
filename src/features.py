@@ -123,3 +123,10 @@ def _as_utc(t):
     t = pd.Timestamp(t)
     return t.tz_localize("UTC") if t.tz is None else t.tz_convert("UTC")
 
+
+def chronological_split(X, y, val_start, test_start):
+    vs, ts = _as_utc(val_start), _as_utc(test_start)
+    tr, va, te = X.index < vs, (X.index >= vs) & (X.index < ts), X.index >= ts
+    if not (tr.any() and va.any() and te.any()):
+        raise ValueError("a split came out empty - check your dates vs the data range")
+    return (X[tr], y[tr]), (X[va], y[va]), (X[te], y[te])
