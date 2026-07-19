@@ -35,3 +35,11 @@ def seasonal_naive(load):
     """
     return load.shift(168)
 
+
+def yesterday(load):
+    return load.shift(24)
+
+
+def mean_last_4_weeks(load):
+    return sum(load.shift(168 * (w + 1)) for w in range(4)) / 4
+
