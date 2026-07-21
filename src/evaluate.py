@@ -43,3 +43,29 @@ def yesterday(load):
 def mean_last_4_weeks(load):
     return sum(load.shift(168 * (w + 1)) for w in range(4)) / 4
 
+
+# --------------------------------------------------------------------------
+# metrics
+# --------------------------------------------------------------------------
+def mae(a, b):
+    return float(np.mean(np.abs(a - b)))
+
+
+def rmse(a, b):
+    return float(np.sqrt(np.mean((a - b) ** 2)))
+
+
+def mape(a, b):
+    return float(np.mean(np.abs((a - b) / a)) * 100)
+
+
+def bias(pred, y):
+    """Mean signed error. Positive means the forecast runs high. MAE hides this
+    completely - a forecast can have a fine MAE and still be systematically
+    over, which matters if you're buying generation against it."""
+    return float(np.mean(pred - y))
+
+
+def predict(model, X):
+    return pd.Series(model.predict(X), index=X.index)
+
