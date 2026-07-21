@@ -66,6 +66,11 @@ def bias(pred, y):
     return float(np.mean(pred - y))
 
 
+def skill(y, pred, base):
+    """Fraction of the baseline's error removed. 0 = no better than the baseline."""
+    return 1.0 - mae(y, pred) / mae(y, base)
+
+
 def predict(model, X):
     return pd.Series(model.predict(X), index=X.index)
 
