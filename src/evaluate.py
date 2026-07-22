@@ -44,6 +44,30 @@ def mean_last_4_weeks(load):
     return sum(load.shift(168 * (w + 1)) for w in range(4)) / 4
 
 
+def baseline_preds(frame, index):
+    """The shift-based baselines plus the official forecast, cut to the scored rows.
+
+    `frame` is what data.load_frame returns: load_mw and benchmark_mw.
+    """
+    load = frame["load_mw"]
+    out = {
+        "yesterday": yesterday(load).reindex(index),
+        "seasonal_naive": seasonal_naive(load).reindex(index),
+        "mean_last_4_weeks": mean_last_4_weeks(load).reindex(index),
+    }
+    if "benchmark_mw" in frame:
+        bench = frame["benchmark_mw"].reindex(index)
+        gaps = int(bench.isna().sum())
+        if gaps:
+            # never fabricate benchmark values just to keep a column in the
+            # table - drop it and say why
+            print(f"  benchmark has {gaps} missing hours in the scored window "
+                  f"({gaps / len(index):.2%}) - excluded from the table")
+        else:
+            out["entsoe_benchmark"] = bench
+    return out
+
+
 # --------------------------------------------------------------------------
 # metrics
 # --------------------------------------------------------------------------
