@@ -98,3 +98,20 @@ def skill(y, pred, base):
 def predict(model, X):
     return pd.Series(model.predict(X), index=X.index)
 
+
+# --------------------------------------------------------------------------
+# scoring
+# --------------------------------------------------------------------------
+def assert_same_rows(y, preds):
+    """Every model and baseline must be scored on the same timestamps, in the
+    same order. If one quietly dropped or reordered rows its MAE is an average
+    over different hours and the table compares nothing."""
+    for name, pr in preds.items():
+        if len(pr) != len(y):
+            raise AssertionError(
+                f"{name}: {len(pr)} predictions vs {len(y)} target rows")
+        if not pr.index.equals(y.index):
+            raise AssertionError(f"{name}: scored on a different index to the target")
+        if pr.isna().any():
+            raise AssertionError(f"{name}: {int(pr.isna().sum())} NaN predictions")
+
