@@ -115,3 +115,12 @@ def assert_same_rows(y, preds):
         if pr.isna().any():
             raise AssertionError(f"{name}: {int(pr.isna().sum())} NaN predictions")
 
+
+def score_table(y, preds, base="seasonal_naive"):
+    assert_same_rows(y, preds)
+    b = preds[base]
+    rows = {n: {"MAE_MW": mae(y, pr), "RMSE_MW": rmse(y, pr), "MAPE_%": mape(y, pr),
+                "bias_MW": bias(pr, y), "skill_vs_naive": skill(y, pr, b)}
+            for n, pr in preds.items()}
+    return pd.DataFrame(rows).T.sort_values("MAE_MW")
+
