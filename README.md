@@ -112,3 +112,29 @@ It's all in `load_forecast.py`: downloading and cleaning the data, building the
 features, the baselines, ridge and gradient boosting with a time-ordered
 train/val/test split, the metrics, and the `--test` self-checks including the
 leakage one.
+
+---
+
+## Results
+
+Test period 2019-01-01 to 2020-09-30. Trained on 2015-2017, validated on 2018.
+The models never see the test period.
+
+| model | MAE (MW) | RMSE (MW) | MAPE | bias (MW) | skill vs naive |
+|---|---:|---:|---:|---:|---:|
+| **gradient boosting** | **1,196** | 1,631 | 2.25% | +110 | **0.505** |
+| MLP (PyTorch) | 1,217 | 1,674 | 2.29% | +216 | 0.496 |
+| ENTSO-E published forecast | 1,762 | 2,253 | 3.22% | **-608** | 0.271 |
+| ridge | 1,837 | 2,515 | 3.46% | +236 | 0.240 |
+| seasonal naive (168h) | 2,416 | 4,184 | 4.55% | -55 | 0 |
+| mean of last 4 weeks | 2,648 | 4,134 | 4.94% | +75 | -0.096 |
+| yesterday | 4,340 | 6,620 | 8.09% | -16 | -0.796 |
+
+Skill score is `1 - MAE_model / MAE_naive`. Gradient boosting removes just over
+half the seasonal-naive baseline's error.
+
+The ENTSO-E row is the TSOs' own published day-ahead forecast, scored on the
+same rows. Note its bias: it runs 608 MW low on average, which MAE hides
+entirely. See Limitations for why this is not a like-for-like comparison.
+
+---
