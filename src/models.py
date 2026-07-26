@@ -62,3 +62,13 @@ def fit_ridge(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
     info = {"name": "ridge", "params": {"alpha": best},
             "val_mae": best_score, "loss": "squared_error"}
     return (lambda X: predict(model, X)), info
+
+# --------------------------------------------------------------------------
+GBM_LEARNING_RATES = [0.05, 0.1]
+MAX_ITERS = [300, 600]
+
+
+def _make(lr, iters):
+    return HistGradientBoostingRegressor(
+        learning_rate=lr, max_iter=iters, early_stopping=False, random_state=SEED)
+
