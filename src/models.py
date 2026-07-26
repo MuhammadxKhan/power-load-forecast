@@ -72,3 +72,19 @@ def _make(lr, iters):
     return HistGradientBoostingRegressor(
         learning_rate=lr, max_iter=iters, early_stopping=False, random_state=SEED)
 
+
+def fit_gbm(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
+    best, best_score = None, float("inf")
+    for lr in GBM_LEARNING_RATES:
+        for it in MAX_ITERS:
+            m = _make(lr, it).fit(Xtr, ytr)
+            v = mae(yva, predict(m, Xva))
+            if verbose:
+                print(f"  gbm lr={lr} iters={it:>4}  val MAE {v:8.1f}")
+            if v < best_score:
+                best, best_score = (lr, it), v
+
+    model = _make(*best).fit(Xfit, yfit)
+    info = {"name": "gbm", "params": {"learning_rate": best[0], "max_iter": best[1]},
+            "val_mae": best_score, "loss": "squared_error"}
+    return (lambda X: predict(model, X)), info
