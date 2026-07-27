@@ -64,6 +64,16 @@ def fit_ridge(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
     return (lambda X: predict(model, X)), info
 
 # --------------------------------------------------------------------------
+# gradient boosting
+#
+# early_stopping is forced off. The default is "auto", which switches itself ON
+# above 10,000 rows and carves an internal 10% validation slice out of whatever
+# you hand it. With 25,800 training rows that was silently active, so max_iter
+# =600 was really running about 95 iterations and the [300, 600] grid was tuning
+# a number the model ignored. Off means max_iter means max_iter, and the
+# external validation fold is the only one - which is what the README claimed
+# all along.
+# --------------------------------------------------------------------------
 GBM_LEARNING_RATES = [0.05, 0.1]
 MAX_ITERS = [300, 600]
 
