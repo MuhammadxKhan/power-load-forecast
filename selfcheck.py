@@ -50,3 +50,22 @@ def check_no_load_leakage(load):
     assert (changed >= t + pd.Timedelta("24h")).any(), "lags look broken - nothing reacted"
     print("  [ok] no feature uses load data newer than 24h")
 
+
+def check_local_time(load):
+    # 2) calendar features follow German clocks, not UTC.
+    # 23:00 UTC on 31 Dec is already New Year's Day in Germany.
+    X, _ = build_features(load)
+    loc = X.index.tz_convert("Europe/Berlin")
+
+    assert (X["hour"].to_numpy() == loc.hour.to_numpy()).all(), "hour is not local"
+    assert (X["dayofweek"].to_numpy() == loc.dayofweek.to_numpy()).all(), "dow is not local"
+    assert (X["hour"].to_numpy() != X.index.hour.to_numpy()).any(), \
+        "local and UTC hours are identical here, so this check proves nothing"
+
+    nye = pd.Timestamp("2016-12-31 23:00", tz="UTC")
+    if nye in X.index:
+        assert X.loc[nye, "is_holiday"] == 1, \
+            "23:00 UTC on 31 Dec is 1 Jan in Germany and should be a holiday"
+        assert X.loc[nye, "hour"] == 0, "local hour should be 0"
+    print("  [ok] calendar features are on Europe/Berlin, not UTC")
+
