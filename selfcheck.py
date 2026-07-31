@@ -69,3 +69,20 @@ def check_local_time(load):
         assert X.loc[nye, "hour"] == 0, "local hour should be 0"
     print("  [ok] calendar features are on Europe/Berlin, not UTC")
 
+
+def check_feature_table(load):
+    # 3) target not among the features, no NaNs, aligned
+    X, y = build_features(load)
+    assert "load_mw" not in X.columns and len(X) == len(y) and (X.index == y.index).all()
+    assert not X.isna().any().any() and not y.isna().any()
+    print("  [ok] feature table is clean and aligned")
+
+
+def check_baseline_and_skill(frame):
+    # 4) seasonal naive is a 168h shift, and the skill score has the right signs
+    load = frame["load_mw"]
+    assert seasonal_naive(load).iloc[168] == load.iloc[0]
+    yv = pd.Series([10.0, 20.0, 30.0]); b = pd.Series([12.0, 18.0, 33.0])
+    assert abs(skill(yv, yv, b) - 1.0) < 1e-9 and abs(skill(yv, b, b)) < 1e-9
+    print("  [ok] seasonal naive is a 168h shift, skill score behaves")
+
