@@ -86,3 +86,36 @@ def check_baseline_and_skill(frame):
     assert abs(skill(yv, yv, b) - 1.0) < 1e-9 and abs(skill(yv, b, b)) < 1e-9
     print("  [ok] seasonal naive is a 168h shift, skill score behaves")
 
+
+def check_beats_naive(frame):
+    # 5) a model beats naive on clean synthetic data
+    load = frame["load_mw"]
+    X, y = build_features(load)
+    (Xtr, ytr), _, (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
+    m = HistGradientBoostingRegressor(max_iter=100, early_stopping=False,
+                                      random_state=0).fit(Xtr, ytr)
+    nv = seasonal_naive(load).reindex(yte.index)
+    assert mae(yte, predict(m, Xte)) < mae(yte, nv)
+    print("  [ok] model beats the baseline on synthetic data")
+
+
+def main():
+    print("Self-check on synthetic data (numbers are meaningless)...\n")
+    frame = fake_frame(400, seed=1)
+    load = frame["load_mw"]
+
+    check_no_load_leakage(load)
+    check_local_time(load)
+    check_feature_table(load)
+    check_baseline_and_skill(frame)
+    check_beats_naive(frame)
+    check_weather_modes(load)
+    check_netcdf_reader()
+    check_mlp_scalers_and_determinism(load)
+    check_same_rows(frame)
+
+    print("\nAll checks passed.")
+
+
+if __name__ == "__main__":
+    main()
