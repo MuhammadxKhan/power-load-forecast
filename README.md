@@ -138,3 +138,26 @@ same rows. Note its bias: it runs 608 MW low on average, which MAE hides
 entirely. See Limitations for why this is not a like-for-like comparison.
 
 ---
+
+## What was checked
+
+- **No lookahead, tested rather than asserted.** `selfcheck.py` spikes one value
+  in the load series, rebuilds the features and asserts nothing within the next
+  24 hours moved. The comparison is `>=`, not `>` — an earlier version used
+  strict inequality, which would have permitted a feature reading the value *at*
+  the poked hour.
+- **Both weather directions.** `lagged` must not react within 24h; `perfect`
+  *must* react at the target hour. Otherwise the two modes could quietly
+  collapse into each other.
+- **Fitting is independent of the test set.** Wrecking the test period by 7.5x
+  and refitting leaves the trained MLP bit-identical.
+- **Same rows for every model**, and the check that verifies this is itself
+  tested — confirmed to fail when rows genuinely differ.
+- **Calendar features are Europe/Berlin, not UTC.** Getting this wrong shifts
+  every hour-of-day feature by 1-2 hours.
+- **Holiday table validated** against the `holidays` package: 55/55 exact match
+  for German national holidays 2015-2020, including the one-off Reformation Day
+  in 2017.
+- **Committed results reproduce bit-for-bit**, MLP included.
+
+---
