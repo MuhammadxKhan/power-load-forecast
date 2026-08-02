@@ -122,3 +122,21 @@ class _Scaler:
     def inverse(self, a):
         return a * self.sd + self.mu
 
+
+def _make_net(n_in, hidden, seed):
+    torch.manual_seed(seed)
+    layers, prev = [], n_in
+    for h in hidden:
+        layers += [nn.Linear(prev, h), nn.ReLU()]
+        prev = h
+    layers.append(nn.Linear(prev, 1))
+    return nn.Sequential(*layers)
+
+
+def _predict(net, xs, ys, X):
+    net.eval()
+    with torch.no_grad():
+        z = torch.from_numpy(xs.transform(X.to_numpy(dtype=np.float64)).astype(np.float32))
+        out = net(z).numpy().astype(np.float64).ravel()
+    return pd.Series(ys.inverse(out), index=X.index)
+
