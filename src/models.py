@@ -98,3 +98,27 @@ def fit_gbm(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
     info = {"name": "gbm", "params": {"learning_rate": best[0], "max_iter": best[1]},
             "val_mae": best_score, "loss": "squared_error"}
     return (lambda X: predict(model, X)), info
+
+# --------------------------------------------------------------------------
+# the MLP
+# --------------------------------------------------------------------------
+HIDDEN_SIZES = [(64, 64), (256, 128)]
+MLP_LEARNING_RATES = [1e-3, 3e-3]
+BATCH = 256
+MAX_EPOCHS = 100
+PATIENCE = 10
+
+
+class _Scaler:
+    def fit(self, a):
+        self.mu = a.mean(axis=0)
+        self.sd = a.std(axis=0)
+        self.sd = np.where(self.sd == 0, 1.0, self.sd)  # constant columns
+        return self
+
+    def transform(self, a):
+        return (a - self.mu) / self.sd
+
+    def inverse(self, a):
+        return a * self.sd + self.mu
+
