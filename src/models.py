@@ -140,3 +140,56 @@ def _predict(net, xs, ys, X):
         out = net(z).numpy().astype(np.float64).ravel()
     return pd.Series(ys.inverse(out), index=X.index)
 
+
+def _train(Xa, ya, hidden, lr, epochs, Xva=None, yva=None, seed=SEED):
+    """Fit on (Xa, ya). Both scalers see that fold and nothing else.
+
+    With a validation fold, stop early and report the winning epoch - that count
+    is a hyperparameter like any other. Without one, train for exactly `epochs`,
+    which is how the refit reuses the tuned number. Same shape as the GBM's
+    max_iter: chosen on validation, then held fixed for the refit.
+    """
+    xa = Xa.to_numpy(dtype=np.float64)
+    yv = ya.to_numpy(dtype=np.float64).reshape(-1, 1)
+
+    xs = _Scaler().fit(xa)
+    ys = _Scaler().fit(yv)
+
+    xt = torch.from_numpy(xs.transform(xa).astype(np.float32))
+    yt = torch.from_numpy(ys.transform(yv).astype(np.float32))
+
+    net = _make_net(xt.shape[1], hidden, seed)
+    opt = torch.optim.Adam(net.parameters(), lr=lr)
+    loss_fn = nn.MSELoss()
+    g = torch.Generator().manual_seed(seed)  # fixed batch order
+
+    best_state, best_val, best_epoch, stale = None, float("inf"), epochs, 0
+    n = xt.shape[0]
+
+    for ep in range(1, epochs + 1):
+        net.train()
+        perm = torch.randperm(n, generator=g)
+        for i in range(0, n, BATCH):
+            idx = perm[i:i + BATCH]
+            opt.zero_grad()
+            loss_fn(net(xt[idx]), yt[idx]).backward()
+            opt.step()
+
+        if Xva is None:
+            continue
+
+        # early stopping watches val MAE because val MAE picks the winner for
+        # the other two models as well. Training still minimises MSE.
+        v = mae(yva, _predict(net, xs, ys, Xva))
+        if v < best_val:
+            best_val, best_epoch, stale = v, ep, 0
+            best_state = {k: t.clone() for k, t in net.state_dict().items()}
+        else:
+            stale += 1
+            if stale >= PATIENCE:
+                break
+
+    if best_state is not None:
+        net.load_state_dict(best_state)
+    return net, xs, ys, best_epoch, best_val
+
