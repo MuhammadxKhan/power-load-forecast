@@ -193,3 +193,37 @@ def _train(Xa, ya, hidden, lr, epochs, Xva=None, yva=None, seed=SEED):
         net.load_state_dict(best_state)
     return net, xs, ys, best_epoch, best_val
 
+
+def fit_mlp(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
+    best, best_score, best_epochs = None, float("inf"), MAX_EPOCHS
+    for hidden in HIDDEN_SIZES:
+        for lr in MLP_LEARNING_RATES:
+            _, _, _, ep, v = _train(Xtr, ytr, hidden, lr, MAX_EPOCHS, Xva, yva)
+            if verbose:
+                print(f"  mlp hidden={str(hidden):>10} lr={lr:<6} "
+                      f"epochs={ep:>3}  val MAE {v:8.1f}")
+            if v < best_score:
+                best, best_score, best_epochs = (hidden, lr), v, ep
+
+    hidden, lr = best
+    net, xs, ys, _, _ = _train(Xfit, yfit, hidden, lr, best_epochs)
+
+    info = {
+        "name": "mlp",
+        "params": {"hidden": hidden, "lr": lr, "epochs": best_epochs,
+                   "batch": BATCH, "seed": SEED},
+        "val_mae": best_score,
+        "loss": "mse",
+        # exported so selfcheck.py can verify the scalers only saw the fit fold
+        "scaler_x_mean": xs.mu.copy(),
+        "scaler_y_mean": float(ys.mu[0]),
+        "scaler_y_std": float(ys.sd[0]),
+        "scaler_fit_rows": len(Xfit),
+    }
+    return (lambda X: _predict(net, xs, ys, X)), info
+
+
+# every model in the comparison, in table order. run_comparison.py and
+# selfcheck.py both iterate this, so adding a fourth model means adding it here
+# and nowhere else.
+ALL_MODELS = [fit_ridge, fit_gbm, fit_mlp]
