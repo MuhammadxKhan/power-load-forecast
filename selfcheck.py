@@ -99,6 +99,46 @@ def check_beats_naive(frame):
     print("  [ok] model beats the baseline on synthetic data")
 
 
+def check_mlp_scalers_and_determinism(load):
+    """7) the MLP's scalers only ever see the fold it is fitted on.
+
+    The fit functions are never handed the test set, so structurally they can't scale by
+    test statistics. Asserting that is weak on its own, so this does it the hard
+    way: wreck the load series inside the test period, refit everything, and
+    check the model that comes out is bit-for-bit the one from the clean run.
+    """
+    X, y = build_features(load)
+    (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
+    Xfit, yfit = pd.concat([Xtr, Xva]), pd.concat([ytr, yva])
+
+    fn_a, info_a = fit_mlp(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=False)
+    fn_b, _ = fit_mlp(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=False)
+    pa = fn_a(Xte)
+    assert (pa.to_numpy() == fn_b(Xte).to_numpy()).all(), "MLP is not deterministic"
+    print("  [ok] MLP is bit-identical across runs (fixed seed, fixed batch order)")
+
+    assert np.array_equal(info_a["scaler_x_mean"], Xfit.to_numpy(dtype=np.float64).mean(axis=0))
+    assert float(yfit.to_numpy().mean()) == info_a["scaler_y_mean"]
+    assert not np.allclose(X.to_numpy(dtype=np.float64).mean(axis=0),
+                           info_a["scaler_x_mean"]), \
+        "fit-fold and full-series stats are identical here, so this proves nothing"
+
+    cut = pd.Timestamp(TEST_START, tz="UTC") + pd.Timedelta("504h")
+    wrecked = load.copy()
+    wrecked.loc[cut:] = wrecked.loc[cut:] * 7.5
+    Xw, yw = build_features(wrecked)
+    (Xtr_w, ytr_w), (Xva_w, yva_w), _ = chronological_split(Xw, yw, VAL_START, TEST_START)
+    assert Xtr_w.equals(Xtr) and Xva_w.equals(Xva), "the wrecking touched the training folds"
+
+    fn_w, info_w = fit_mlp(
+        Xtr_w, ytr_w, Xva_w, yva_w,
+        pd.concat([Xtr_w, Xva_w]), pd.concat([ytr_w, yva_w]), verbose=False)
+    assert np.array_equal(info_a["scaler_x_mean"], info_w["scaler_x_mean"])
+    assert (pa.to_numpy() == fn_w(Xte).to_numpy()).all(), \
+        "test-period values changed the fitted MLP - something leaked"
+    print("  [ok] wrecking the test period leaves the fitted MLP bit-identical")
+
+
 def main():
     print("Self-check on synthetic data (numbers are meaningless)...\n")
     frame = fake_frame(400, seed=1)
