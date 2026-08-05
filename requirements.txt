@@ -1,0 +1,19 @@
+# Pinned. Note this only fixes the DIRECT dependencies - Python itself, the
+# platform and transitive packages are not pinned, and PyTorch does not
+# guarantee identical results across platforms. Ridge and the GBM reproduce
+# exactly under these pins; the MLP's predictions can shift by a few MW on a
+# different OS or CPU. See the README for the environment the committed
+# results came from.
+numpy==2.4.3
+pandas==3.0.1
+scikit-learn==1.8.0
+torch==2.13.0
+matplotlib==3.10.8
+
+# reading the raw ERA5 download. Only needed once - after that the derived
+# era5_temp_de.csv is what gets read.
+xarray==2026.7.0
+netCDF4==1.7.4
+
+# fetching ERA5 from Copernicus. Only needed if you run download_era5.py.
+cdsapi==0.7.7
