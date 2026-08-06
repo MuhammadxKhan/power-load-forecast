@@ -161,6 +161,48 @@ def load_temperature(index=None):
     return s
 
 
+def _from_netcdf(files):
+    """Average the ERA5 grid down to one number per hour.
+
+    Deliberately NOT xarray.open_mfdataset. That needs dask, which isn't a
+    dependency here, and download_era5.py writes one file per year - so the
+    multi-year path died with an ImportError the first time it met real data.
+    The single-file path worked, which is exactly why nobody noticed. Opening
+    each file and reducing it to a 1-D series costs nothing: the spatial mean
+    collapses a year to 8,760 numbers before anything is held.
+    """
+    import xarray as xr
+
+    parts = []
+    for f in files:
+        with xr.open_dataset(f) as ds:
+            if "t2m" not in ds:
+                raise KeyError(
+                    f"{f}: no 't2m' variable, found {list(ds.data_vars)}. "
+                    "Refusing to guess - an earlier version silently took the "
+                    "first variable, which would happily average the wrong "
+                    "field and report it as temperature.")
+            # CDS has used both 'time' and 'valid_time' depending on when you
+            # downloaded it
+            tname = "valid_time" if "valid_time" in ds["t2m"].dims else "time"
+            space = [d for d in ds["t2m"].dims if d != tname]
+            parts.append(ds["t2m"].mean(dim=space).to_series())
+
+    s = pd.concat(parts).sort_index()
+    dupes = int(s.index.duplicated().sum())
+    if dupes:
+        # yearly files can overlap at the seam. Say so rather than dropping
+        # silently - a big count means the download is wrong, not the seam.
+        print(f"{dupes} duplicate ERA5 timestamps, keeping the first of each")
+        s = s[~s.index.duplicated(keep="first")]
+
+    s = s - 273.15                            # ERA5 ships Kelvin
+    s.index = pd.DatetimeIndex(s.index)
+    if s.index.tz is None:
+        s.index = s.index.tz_localize("UTC")  # ERA5 timestamps are UTC
+    return s.sort_index()
+
+
 # --------------------------------------------------------------------------
 # synthetic, for the self-checks only
 # --------------------------------------------------------------------------
