@@ -41,6 +41,11 @@ OPSD_URL = (f"https://data.open-power-system-data.org/time_series/{OPSD_VERSION}
 OPSD_CACHE = "opsd_60min.csv"        # the full 94MB file, gitignored
 OPSD_EXTRACT = "data/de_hourly.csv"  # three columns of it, ~2MB, committed
 
+ERA5_CACHE = "era5_temp_de.csv"    # derived national series, small, committable
+ERA5_GLOB = "era5_raw/*.nc"        # raw download, ~1GB, gitignored
+
+# A rectangle loosely around Germany. NOT a border - see the note in
+# load_temperature about what that costs.
 BBOX = {"north": 55.0, "south": 47.0, "west": 5.5, "east": 15.5}
 
 ACTUAL_COL = "DE_load_actual_entsoe_transparency"
@@ -114,6 +119,46 @@ def _fill_gaps(s):
     happening to be clean.
     """
     return s.ffill().bfill()
+
+
+# --------------------------------------------------------------------------
+# weather
+# --------------------------------------------------------------------------
+def load_temperature(index=None):
+    """National hourly 2m temperature in Celsius, indexed by UTC.
+
+    Reads the small derived CSV if it's there, otherwise builds it from the
+    NetCDF in era5_raw/ and writes it out so the slow path happens once.
+
+    Worth knowing what this average is: a plain unweighted mean over a
+    RECTANGLE, not over Germany. No land mask, no border check, so it includes
+    sea and a good deal of Poland, Czechia, Austria and France, and it weights
+    every cell equally when Berlin's temperature clearly matters more to German
+    demand than the North Sea's. It's a national temperature PROXY. A land mask
+    is the obvious first fix, population weighting the better second one.
+    """
+    if os.path.exists(ERA5_CACHE):
+        s = pd.read_csv(ERA5_CACHE, parse_dates=["timestamp"]).set_index("timestamp")["temp_c"]
+        s.index = pd.DatetimeIndex(s.index).tz_convert("UTC")
+    else:
+        files = sorted(glob.glob(ERA5_GLOB))
+        if not files:
+            raise FileNotFoundError(
+                f"no {ERA5_CACHE} and nothing matching {ERA5_GLOB}.\n"
+                "Run  python download_era5.py  first (free Copernicus account "
+                "needed), or run without --weather.")
+        s = _from_netcdf(files)
+        s.rename_axis("timestamp").rename("temp_c").to_csv(ERA5_CACHE)
+        print(f"Wrote {ERA5_CACHE} ({len(s):,} hours) - the raw NetCDF isn't needed again")
+
+    s.name = "temp_c"
+    if index is not None:
+        s = s.reindex(index)
+        gaps = int(s.isna().sum())
+        if gaps:
+            print(f"{gaps} hours have no temperature - filling from earlier values")
+            s = _fill_gaps(s)
+    return s
 
 
 # --------------------------------------------------------------------------
