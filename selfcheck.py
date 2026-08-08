@@ -146,6 +146,61 @@ def check_weather_modes(load):
     print(f"  [ok] weather adds exactly 5 features ({n_none} -> {n_wx})")
 
 
+def check_netcdf_reader():
+    """7) the ERA5 NetCDF reader actually reads NetCDF.
+
+    Everything else here uses fake_temperature, which is a plain pandas Series -
+    so none of it exercises xarray at all. This builds a real two-file NetCDF
+    fixture in ERA5's layout, reads it through the same _from_netcdf the real
+    pipeline uses, and deletes it. Two files specifically, because the earlier
+    version of _from_netcdf called xarray.open_mfdataset, which needs dask, and
+    dask was never a dependency - so the multi-year path (download_era5.py
+    writes one file per year) would have died with an ImportError the first time
+    it met real data. The single-file path worked, which is exactly why nobody
+    noticed.
+    """
+    try:
+        import xarray as xr
+    except ImportError:
+        raise AssertionError(
+            "xarray is a pinned dependency but isn't installed, so the NetCDF "
+            "reader is untested. Install it rather than skipping - an earlier "
+            "version printed 'skipping' and then 'All checks passed', which is "
+            "worse than failing.")
+
+    import shutil
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    try:
+        files, expected = [], []
+        for k, yr in enumerate((2016, 2017)):
+            idx = pd.date_range(f"{yr}-01-01", periods=36, freq="h")
+            lats = np.arange(55.0, 53.9, -0.25)
+            lons = np.arange(5.5, 6.6, 0.25)
+            # a known field so the spatial mean is predictable: every cell in
+            # hour i holds exactly 273.15 + i + k, so the mean is i + k in C
+            base = np.arange(len(idx), dtype="float32") + k + 273.15
+            data = np.repeat(np.repeat(base[:, None, None], len(lats), 1), len(lons), 2)
+            f = f"{tmp}/era5_t2m_{yr}.nc"
+            xr.Dataset({"t2m": (("valid_time", "latitude", "longitude"), data)},
+                       coords={"valid_time": idx, "latitude": lats,
+                               "longitude": lons}).to_netcdf(f)
+            files.append(f)
+            expected.extend((np.arange(len(idx)) + k).tolist())
+
+        s = _from_netcdf(files)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    assert len(s) == 72, f"expected 72 hours across two files, got {len(s)}"
+    assert s.index.tz is not None and str(s.index.tz) == "UTC", "ERA5 index must be UTC"
+    assert np.allclose(s.to_numpy(), expected), \
+        "spatial mean or the Kelvin->Celsius conversion is wrong"
+    assert s.index.is_monotonic_increasing, "concatenated files are out of order"
+    print("  [ok] NetCDF reader handles multiple files, no dask, K->C correct")
+
+
 def check_mlp_scalers_and_determinism(load):
     """7) the MLP's scalers only ever see the fold it is fitted on.
 
