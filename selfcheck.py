@@ -241,6 +241,36 @@ def check_mlp_scalers_and_determinism(load):
     print("  [ok] wrecking the test period leaves the fitted MLP bit-identical")
 
 
+def check_same_rows(frame):
+    """8) every model and baseline scored on identical rows. This is what makes
+    the comparison mean anything."""
+    load = frame["load_mw"]
+    X, y = build_features(load)
+    (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
+    Xfit, yfit = pd.concat([Xtr, Xva]), pd.concat([ytr, yva])
+
+    preds = baseline_preds(frame, yte.index)
+    assert "entsoe_benchmark" in preds, "the published benchmark should be in the baselines"
+    for fit in ALL_MODELS:
+        fn, info = fit(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=False)
+        preds[info["name"]] = fn(Xte)
+
+    assert_same_rows(yte, preds)
+    print(f"  [ok] all {len(preds)} models scored on the same {len(yte):,} rows")
+
+    lead = mae_by_target_hour(yte, preds)
+    assert list(lead.index) == list(range(24)), "local hour should run 0..23"
+
+    broken = dict(preds)
+    broken["gbm"] = broken["gbm"].iloc[:-1]
+    try:
+        assert_same_rows(yte, broken)
+    except AssertionError:
+        print("  [ok] the same-rows check actually fails when rows differ")
+    else:
+        raise AssertionError("assert_same_rows passed a mismatched set - it is useless")
+
+
 def main():
     print("Self-check on synthetic data (numbers are meaningless)...\n")
     frame = fake_frame(400, seed=1)
