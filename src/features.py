@@ -54,6 +54,11 @@ TZ = "Europe/Berlin"
 # So this measures the cost of temperature error UNDER THIS IMPOSED ERROR MODEL,
 # and nothing more. 1.0 is a plausible order of magnitude for day-ahead 2m
 # temperature, not a measured value for any particular model or region.
+SYNTHETIC_TEMP_ERROR_C = 1.0
+
+# German national public holidays 2015-2020, as LOCAL dates. Load drops hard on
+# these and the weekday features can't see them. Regional holidays are missing
+# and that's the model's worst failure - see the README.
 HOLIDAYS = {
     "2015-01-01", "2015-04-03", "2015-04-06", "2015-05-01", "2015-05-14",
     "2015-05-25", "2015-10-03", "2015-12-25", "2015-12-26",
@@ -69,6 +74,13 @@ HOLIDAYS = {
     "2020-06-01", "2020-10-03", "2020-12-25", "2020-12-26",
 }
 
+WEATHER_MODES = ("none", "lagged", "noisy", "perfect")
+
+# Hinge points for the heating/cooling terms. 15C/22C are conventional-ish for
+# Europe but they are a CHOICE, not a fact, and the choice matters: a model can
+# rescale a feature's magnitude but it cannot move where the hinge sits, so a
+# badly placed base temperature is a badly placed kink that ridge in particular
+# can't recover from. Worth a sensitivity check I haven't run.
 HDD_BASE = 15.0
 CDD_BASE = 22.0
 
