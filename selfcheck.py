@@ -99,6 +99,53 @@ def check_beats_naive(frame):
     print("  [ok] model beats the baseline on synthetic data")
 
 
+def check_weather_modes(load):
+    """6) each weather mode does what it claims, and 'lagged' cannot leak.
+
+    This is the check that keeps the weather honest. Poke the temperature series
+    and see which modes react.
+
+      lagged   must NOT react inside 24h - it only ever looks backwards
+      perfect  MUST react at the poked hour, because that is the whole point of
+               perfect prognosis, and if it didn't the mode would be broken
+
+    Asserting both ways round means the modes can't quietly become the same
+    thing.
+    """
+    temp = fake_temperature(load.index, seed=3)
+
+    hdh, cdh = degree_hours(pd.Series([-5.0, 18.0, 30.0]))
+    assert hdh.tolist() == [20.0, 0.0, 0.0] and cdh.tolist() == [0.0, 0.0, 8.0]
+
+    assert usable_temperature(temp, "none") is None
+    assert usable_temperature(temp, "perfect").equals(temp)
+    assert usable_temperature(temp, "lagged").equals(temp.shift(24))
+    fc = usable_temperature(temp, "noisy", seed=0)
+    assert not fc.equals(temp), "noisy mode must not be the exact truth"
+    assert usable_temperature(temp, "noisy", seed=0).equals(fc), "noisy mode not seeded"
+
+    poked, t = _poke(temp, 4000, 25.0)
+
+    Xb, _ = build_features(load, temp, weather_mode="lagged")
+    Xa, _ = build_features(load, poked, weather_mode="lagged")
+    changed = _changed_rows(Xb, Xa)
+    too_soon = changed[(changed >= t) & (changed < t + pd.Timedelta("24h"))]
+    assert len(too_soon) == 0, f"LEAKAGE: lagged weather reacted within 24h at {list(too_soon)[:3]}"
+    assert len(changed) > 0, "lagged weather never reacted at all - features look dead"
+    print("  [ok] weather_mode='lagged' uses no temperature newer than 24h")
+
+    Xb, _ = build_features(load, temp, weather_mode="perfect")
+    Xa, _ = build_features(load, poked, weather_mode="perfect")
+    changed = _changed_rows(Xb, Xa)
+    assert t in changed, "perfect mode should react at the poked hour - it isn't perfect prog"
+    print("  [ok] weather_mode='perfect' does use target-hour temperature, as documented")
+
+    n_none = build_features(load, temp, weather_mode="none")[0].shape[1]
+    n_wx = build_features(load, temp, weather_mode="lagged")[0].shape[1]
+    assert n_wx == n_none + 5, f"expected 5 weather features, got {n_wx - n_none}"
+    print(f"  [ok] weather adds exactly 5 features ({n_none} -> {n_wx})")
+
+
 def check_mlp_scalers_and_determinism(load):
     """7) the MLP's scalers only ever see the fold it is fitted on.
 
