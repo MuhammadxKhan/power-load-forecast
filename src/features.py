@@ -69,6 +69,27 @@ HOLIDAYS = {
     "2020-06-01", "2020-10-03", "2020-12-25", "2020-12-26",
 }
 
+HDD_BASE = 15.0
+CDD_BASE = 22.0
+
+
+def degree_hours(temp_c):
+    """Heating and cooling degree HOURS - one-sided hinge terms on hourly
+    temperature.
+
+    Not degree days in the conventional sense. A proper heating degree day uses
+    the DAILY MEAN and accumulates over the day (see Eurostat); these are
+    per-hour hinges on the instantaneous value. Same idea, different unit, and
+    calling them degree days would be wrong.
+
+    They exist because load against temperature is V-shaped: demand rises when
+    it's cold (heating) and again when it's hot (cooling). A straight line can't
+    fit a V, so ridge in particular struggles with raw temperature. Splitting it
+    into two one-sided variables turns the V into two straight arms.
+    """
+    return np.maximum(0.0, HDD_BASE - temp_c), np.maximum(0.0, temp_c - CDD_BASE)
+
+
 def _cyclical(values, period):
     r = 2 * np.pi * values / period
     return np.sin(r), np.cos(r)
