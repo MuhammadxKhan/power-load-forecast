@@ -107,6 +107,29 @@ def _cyclical(values, period):
     return np.sin(r), np.cos(r)
 
 
+def usable_temperature(temp, weather_mode, seed=0):
+    """The temperature the model is allowed to use for the target hour.
+
+    Split out from build_features so selfcheck.py can test it on its own.
+    """
+    if weather_mode not in WEATHER_MODES:
+        raise ValueError(f"weather_mode must be one of {WEATHER_MODES}")
+    if weather_mode == "none":
+        return None
+    if temp is None:
+        raise ValueError(f"weather_mode={weather_mode!r} needs a temperature series")
+
+    if weather_mode == "lagged":
+        return temp.shift(24)
+    if weather_mode == "perfect":
+        return temp
+    # "noisy": truth plus synthetic error. One random realisation, seeded, so
+    # the run reproduces - but one realisation is not an uncertainty estimate.
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(0, SYNTHETIC_TEMP_ERROR_C, len(temp))
+    return temp + noise
+
+
 def build_features(load, temp=None, weather_mode="none", seed=0):
     df = pd.DataFrame({"load_mw": load})
     idx = df.index
