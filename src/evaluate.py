@@ -152,3 +152,39 @@ def worst_days(y, pred, n=5):
     local_date = pd.Index(y.index.tz_convert(TZ).date, name="date")
     return err.groupby(local_date).mean().sort_values(ascending=False).head(n)
 
+
+# --------------------------------------------------------------------------
+# rolling-origin backtest
+#
+# One train/val/test split gives one number per model and no way to tell whether
+# a gap between two of them is real or just which window you happened to pick.
+# That matters here: on the single split the GBM and the MLP finish about 21 MW
+# apart, under 2%.
+#
+# So walk the origin forward. Each fold trains on everything up to its own
+# cutoff, tunes on the year before its test block, and scores the block. Same
+# protocol as the main run, four times, on four different test periods.
+#
+# Two things this is NOT. Not a significance test - that's a Diebold-Mariano
+# test on the paired errors, accounting for serial correlation, and it isn't
+# done here. And the folds aren't independent trials: they share training data
+# and load is serially correlated, so winning three of four is a stability
+# signal, not four coin flips. A reversal between folds can equally mean
+# genuine regime-dependent performance rather than noise.
+# --------------------------------------------------------------------------
+def backtest_folds(index, first_test_start, block_months=6, val_months=12):
+    """Expanding-window folds: (val_start, test_start, test_end) per fold."""
+    start = pd.Timestamp(first_test_start, tz="UTC")
+    last = index.max()
+    folds = []
+    while start < last:
+        end = start + pd.DateOffset(months=block_months)
+        val_start = start - pd.DateOffset(months=val_months)
+        if end > last:
+            end = last + pd.Timedelta("1h")
+        if (index >= start).sum() < 24 * 30:   # skip a stub final block
+            break
+        folds.append((val_start, start, end))
+        start = end
+    return folds
+
