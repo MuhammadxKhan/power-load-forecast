@@ -124,3 +124,31 @@ def score_table(y, preds, base="seasonal_naive"):
             for n, pr in preds.items()}
     return pd.DataFrame(rows).T.sort_values("MAE_MW")
 
+
+def mae_by_target_hour(y, preds):
+    """Error against the target's local clock hour.
+
+    This is NOT lead-time verification, and an earlier version of this file
+    claimed it was. With a single assumed forecast origin at midnight, clock
+    hour and horizon are the same variable - hour 14 is always 14 hours ahead -
+    so the two are perfectly confounded and you cannot tell "the forecast decays
+    with horizon" from "afternoon load is harder". Real lead-time verification
+    needs the same valid time forecast from several issue times, which means
+    carrying issue_time, valid_time and lead_time explicitly. This project
+    doesn't.
+
+    It is doubly wrong for entsoe_benchmark, whose issue time is not midnight at
+    all, so its horizon isn't the clock hour even nominally.
+
+    What the curve does show, honestly: which hours of the day are hard.
+    """
+    lead = pd.Index(y.index.tz_convert(TZ).hour, name="local_hour")
+    return pd.DataFrame({n: pd.Series((pr - y).abs().to_numpy()).groupby(lead).mean()
+                         for n, pr in preds.items()})
+
+
+def worst_days(y, pred, n=5):
+    err = (pred - y).abs()
+    local_date = pd.Index(y.index.tz_convert(TZ).date, name="date")
+    return err.groupby(local_date).mean().sort_values(ascending=False).head(n)
+
