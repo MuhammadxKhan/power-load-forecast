@@ -130,3 +130,19 @@ def main():
     pd.DataFrame(preds).assign(actual=yte).to_csv("results_predictions.csv")
     print("Wrote results_scores.csv and results_predictions.csv")
 
+
+# --------------------------------------------------------------------------
+# plots
+# --------------------------------------------------------------------------
+OUT = "figures"
+TZ = "Europe/Berlin"
+
+
+def _save(fig, name):
+    os.makedirs(OUT, exist_ok=True)
+    path = os.path.join(OUT, name)
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
+
