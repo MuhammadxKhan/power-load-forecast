@@ -188,3 +188,45 @@ def backtest_folds(index, first_test_start, block_months=6, val_months=12):
         start = end
     return folds
 
+
+def backtest_run(X, y, models, folds, verbose=True):
+    """Fit every model on every fold. Returns tidy MAE per (fold, model)."""
+    from .features import chronological_split
+
+    rows = []
+    for k, (val_start, test_start, test_end) in enumerate(folds, 1):
+        Xk, yk = X[X.index < test_end], y[y.index < test_end]
+        (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(
+            Xk, yk, val_start, test_start)
+        Xfit, yfit = pd.concat([Xtr, Xva]), pd.concat([ytr, yva])
+
+        if verbose:
+            print(f"  fold {k}: train {len(ytr):,}h  val {len(yva):,}h  "
+                  f"test {yte.index[0]:%Y-%m-%d}..{yte.index[-1]:%Y-%m-%d} "
+                  f"({len(yte):,}h)")
+
+        preds = {}
+        for fit in models:
+            fn, info = fit(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=False)
+            preds[info["name"]] = fn(Xte)
+        assert_same_rows(yte, preds)   # same guarantee as the main run
+
+        for name, pr in preds.items():
+            rows.append({"fold": k,
+                         "test_start": yte.index[0].date(),
+                         "model": name,
+                         "MAE_MW": mae(yte, pr)})
+
+    return pd.DataFrame(rows)
+
+
+def backtest_summary(tidy):
+    """Mean MAE per model, plus how many folds each one won."""
+    wide = tidy.pivot(index="fold", columns="model", values="MAE_MW")
+    wins = wide.idxmin(axis=1).value_counts()
+    out = pd.DataFrame({
+        "mean_MAE_MW": wide.mean(),
+        "worst_fold_MAE_MW": wide.max(),
+        "folds_won": wins.reindex(wide.columns).fillna(0).astype(int),
+    }).sort_values("mean_MAE_MW")
+    return wide, out
