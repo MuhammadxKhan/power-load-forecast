@@ -191,6 +191,29 @@ def plot_error_by_target_hour(y, preds):
     return _save(fig, "error_by_target_hour.png")
 
 
+def plot_load_vs_temperature(y, temp):
+    """Demand against temperature - the reason weather belongs in the model.
+
+    Expect a V: heating demand at the cold end, cooling at the warm end, minimum
+    somewhere in the middle. A straight line cannot fit that shape, which is why
+    the heating/cooling degree-hour features exist.
+    """
+    t = temp.reindex(y.index)
+    hour = y.index.tz_convert(TZ).hour
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    sc = ax.scatter(t, y / 1000, c=hour, s=3, alpha=0.35, cmap="twilight")
+    binned = (y / 1000).groupby(pd.cut(t, bins=30)).mean()
+    ax.plot([iv.mid for iv in binned.index], binned.to_numpy(),
+            color="black", lw=2, label="binned mean")
+    ax.set_xlabel("temperature, deg C")
+    ax.set_ylabel("demand, GW")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.colorbar(sc, ax=ax, label="local hour")
+    return _save(fig, "load_vs_temperature.png")
+
+
 def plot_worst_days(y, preds, n=12):
     """The days the model got most wrong, ranked. Where the model breaks is
     usually more informative than where it works."""
@@ -206,3 +229,15 @@ def plot_worst_days(y, preds, n=12):
     ax.grid(alpha=0.3, axis="x")
     return _save(fig, "worst_days.png")
 
+
+def all_plots(y, preds, temp=None):
+    made = [plot_actual_vs_forecast(y, preds),
+            plot_error_by_target_hour(y, preds),
+            plot_worst_days(y, preds)]
+    if temp is not None:
+        made.append(plot_load_vs_temperature(y, temp))
+    return made
+
+
+if __name__ == "__main__":
+    main()
