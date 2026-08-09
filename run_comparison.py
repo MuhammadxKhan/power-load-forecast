@@ -146,3 +146,26 @@ def _save(fig, name):
     plt.close(fig)
     return path
 
+
+def plot_actual_vs_forecast(y, preds, days=7, start=None):
+    """One week of actual demand with the forecasts on top.
+
+    The table says the GBM is off by ~1,200 MW on average. This says what that
+    looks like: whether it's tracking the shape and sitting slightly off, or
+    missing the peaks, which are very different problems.
+    """
+    idx = y.index.tz_convert(TZ)
+    start = pd.Timestamp(start, tz=TZ) if start else idx[0]
+    m = (idx >= start) & (idx < start + pd.Timedelta(days=days))
+
+    fig, ax = plt.subplots(figsize=(11, 4))
+    ax.plot(idx[m], y[m] / 1000, color="black", lw=2, label="actual")
+    for name in ("gbm", "mlp", "entsoe_benchmark"):
+        if name in preds:
+            ax.plot(idx[m], preds[name][m] / 1000, lw=1.2, alpha=0.85, label=name)
+    ax.set_ylabel("GW")
+    ax.set_xlabel(f"local time, {days} days from {start:%Y-%m-%d}")
+    ax.legend(ncol=4, fontsize=8)
+    ax.grid(alpha=0.3)
+    return _save(fig, "actual_vs_forecast.png")
+
