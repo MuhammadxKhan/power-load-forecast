@@ -169,3 +169,40 @@ def plot_actual_vs_forecast(y, preds, days=7, start=None):
     ax.grid(alpha=0.3)
     return _save(fig, "actual_vs_forecast.png")
 
+
+def plot_error_by_target_hour(y, preds):
+    """MAE against the target's local clock hour.
+
+    Not lead time - with one midnight origin the two are the same variable, so
+    this cannot separate horizon decay from "afternoon is hard". It is still
+    worth plotting: it shows which hours cost you the most.
+    """
+    tbl = mae_by_target_hour(y, preds)
+    keep = [c for c in ("gbm", "mlp", "ridge", "entsoe_benchmark", "seasonal_naive")
+            if c in tbl]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for c in keep:
+        ax.plot(tbl.index, tbl[c], marker="o", ms=3, lw=1.2, label=c)
+    ax.set_xlabel("local hour of target")
+    ax.set_ylabel("MAE, MW")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    return _save(fig, "error_by_target_hour.png")
+
+
+def plot_worst_days(y, preds, n=12):
+    """The days the model got most wrong, ranked. Where the model breaks is
+    usually more informative than where it works."""
+    name = "gbm" if "gbm" in preds else list(preds)[0]
+    err = (preds[name] - y).abs()
+    daily = err.groupby(y.index.tz_convert(TZ).date).mean().sort_values(ascending=False)
+    top = daily.head(n)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.barh([str(d) for d in top.index][::-1], top.to_numpy()[::-1] / 1000,
+            color="tab:red", alpha=0.8)
+    ax.set_xlabel(f"{name} mean absolute error, GW")
+    ax.grid(alpha=0.3, axis="x")
+    return _save(fig, "worst_days.png")
+
