@@ -1,117 +1,10 @@
-# Day-ahead electricity load forecasting
+# Day-ahead electricity load forecasting for Germany
 
-Predicting Germany's hourly electricity demand one day ahead, using data from
-[Open Power System Data](https://data.open-power-system-data.org/time_series/)
-(ENTSO-E figures, no API key needed). 2015–2020, hourly.
+Forecasts German hourly electricity demand one day ahead, and tests how much
+weather data actually adds.
 
-I mostly wanted to see whether I could beat the obvious baseline, and to be
-careful about not accidentally cheating while doing it.
-
-```bash
-pip install numpy pandas scikit-learn
-python load_forecast.py            # Germany, downloads ~200MB once then caches
-python load_forecast.py --country GB
-python load_forecast.py --test     # quick self-check, no download
-```
-
-## The setup
-
-You're at midnight, forecasting all 24 hours of the coming day. So the most
-recent data you're allowed to use is 23:00 the day before.
-
-This is the whole reason the features look the way they do. Nothing uses a lag
-shorter than 24 hours. If you let a 1-hour lag in, the error drops through the
-floor and you feel great, but the model is useless because in reality you don't
-have the last hour's demand when forecasting a full day ahead. I got this wrong
-in an earlier version, which is why there's now a check for it (see `--test`):
-it spikes one value in the load series and confirms nothing within the next 24
-hours reacts to it.
-
-## The baseline
-
-Before any model, the number to beat is **seasonal naive**: assume this hour
-will be the same as the same hour, same weekday, last week. It's one line and
-it's annoyingly good, because electricity demand is very habitual; weekdays
-look like weekdays, weekends like weekends. If a model can't beat "just copy
-last week", it isn't doing anything.
-
-So the real question the whole project answers is: can a model beat
-copy-last-week, and by how much? The metric I use for that is the skill score,
-`1 - MAE_model / MAE_baseline`, the share of the baseline's error that the
-model removes. 0 means no better than copying last week.
-
-## Results
-
-Trained on 2015–2017, tuned on 2018, and tested once on 2019 to Sep 2020.
-
-| model | MAE (MW) | RMSE (MW) | MAPE | skill vs naive |
-|---|---:|---:|---:|---:|
-| gbm | 1,220 | 1,637 | 2.31% | 0.495 |
-| ridge | 1,837 | 2,514 | 3.48% | 0.240 |
-| seasonal naive | 2,416 | 4,184 | 4.55% | 0.000 |
-| mean of last 4 weeks | 2,648 | 4,134 | 4.95% | -0.096 |
-| yesterday | 4,340 | 6,620 | 8.09% | -0.796 |
-
-Gradient boosting cut the baseline's error roughly in half (2,416 -> 1,220 MW).
-Ridge on the same features got about halfway there. Worth noting the "yesterday"
-row is the worst of all, that's the point of using seasonal naive instead of a
-plain 24-hour lag, since a Saturday looks nothing like the Friday before it.
-
-Ridge barely changed across regularisation strengths (alpha 0.1 to 100), which
-makes sense; with ~50k rows and 20 features there's not much overfitting for it
-to fix. I kept the tuning small on purpose.
-
-## Where it goes wrong
-
-Error is fairly even across the day, a bit worse in the afternoon peak. The
-interesting bit is the worst individual days:
-
-| date | MAE (MW) | what happened |
-|---|---:|---|
-| 2019-06-20 | 8,212 | Corpus Christi - a holiday in some German states but not all |
-| 2020-06-11 | 7,820 | Corpus Christi again |
-| 2019-04-21 | 4,771 | Easter Sunday |
-| 2020-04-09 | 4,385 | COVID demand drop |
-| 2020-04-12 | 3,981 | Easter / COVID |
-
-Two things break it. Regional holidays it can't see: Corpus Christi is only a
-public holiday in some states, so it's not in my (national) holiday list and the
-model treats it as a normal working day. And spring 2020, which is COVID, and no
-model trained on 2015–2018 was going to see that coming. Both of those are
-fixable-ish and I've listed them below rather than pretending the model is just
-"a bit noisy".
-
-## Things I'd add with more time
-
-- A proper holiday calendar with state-level holidays. That alone kills the two
-  worst days.
-- Temperature data. This is the big missing piece — demand is heavily driven by
-  heating and cooling, and right now the model only knows the season from the
-  calendar, not the actual weather.
-- A separate model per hour, since 3am and 2pm really don't behave the same.
-- Some kind of prediction interval, not just a single number.
-- Prices instead of load, eventually. Load is smooth and well-behaved; prices
-  spike, go negative, and switch regimes, so that's a much harder problem. I
-  picked load on purpose to keep the scope sane.
-
-## Known limitations
-
-- No weather data, which is the biggest gap by far.
-- One country, one model, one test window — I'm not claiming this generalises.
-- Holidays are hardcoded, national-only, for Germany 2015–2020, which is exactly
-  why the regional-holiday days blow up.
-- The <1% of missing hours are interpolated rather than dropped, because
-  dropping them would quietly break the fixed 24h and 168h lags.
-- The gradient boosting is only lightly tuned (four settings on the validation
-  year). I'd rather report an honest lightly-tuned number than keep poking the
-  test set until it looks good.
-
-## What's in the file
-
-It's all in `load_forecast.py`: downloading and cleaning the data, building the
-features, the baselines, ridge and gradient boosting with a time-ordered
-train/val/test split, the metrics, and the `--test` self-checks including the
-leakage one.
+Data: [OPSD](https://open-power-system-data.org/) time series (2020-10-06
+release), German hourly load 2015-2020, plus ERA5 2m temperature.
 
 ---
 
@@ -139,6 +32,137 @@ entirely. See Limitations for why this is not a like-for-like comparison.
 
 ---
 
+## Does weather help?
+
+The more interesting question, and the answer is "depends on the season" rather
+than yes or no.
+
+Temperature enters through four switchable modes, so the value of *better*
+weather information can be measured rather than assumed:
+
+- `none` — no weather at all
+- `lagged` — temperature from 24h+ ago only (honest: no future information)
+- `noisy` — true temperature plus 1 degC Gaussian noise (stand-in for forecast error)
+- `perfect` — exact temperature at the target hour (perfect prognosis: an upper bound, not achievable)
+
+### Single test window, gradient boosting
+
+| mode | MAE (MW) | vs none |
+|---|---:|---:|
+| none | 1,196.0 | — |
+| lagged | 1,196.3 | +0.3 |
+| noisy (seed 0) | 1,178.0 | -18.0 |
+| perfect | 1,191.2 | -4.8 |
+
+Perfect foreknowledge of temperature buys 0.4%. Small enough to be suspicious,
+so it was checked properly.
+
+### The single-window number is inside the noise
+
+`noisy` across ten random seeds, gradient boosting:
+
+| | MAE (MW) |
+|---|---:|
+| mean | 1,186.1 |
+| std | 8.4 |
+| min | 1,178.0 |
+| max | 1,203.0 |
+| **spread** | **25.0** |
+
+The spread from nothing but changing the random seed (25.0 MW) is larger than
+the apparent gain from adding weather (18.0 MW). And seed 0 — the default, the
+one a single run reports — is joint-best of the ten. Reporting one seed would
+have overstated the effect roughly twofold.
+
+### Across rolling folds, weather does help
+
+Rolling-origin backtest, gradient boosting, 6-month blocks:
+
+| fold | test period | none | noisy | delta |
+|---|---|---:|---:|---:|
+| 1 | 2019 H1 | 1,280.5 | 1,317.2 | +36.7 |
+| 2 | 2019 H2 | 1,021.9 | 930.6 | -91.3 |
+| 3 | 2020 H1 | 1,324.9 | 1,281.4 | -43.5 |
+| 4 | 2020 Q3 | 970.1 | 888.0 | -82.0 |
+
+Mean -45.0 MW, helping in 3 folds of 4 — but the fold-to-fold range is 128 MW.
+
+### The effect is seasonal
+
+Mean absolute error by month, test period:
+
+| month | none | with weather | delta |
+|---|---:|---:|---:|
+| Jan | 1,221 | 1,409 | **+15.4%** |
+| Feb | 1,026 | 1,018 | -0.8% |
+| Mar | 1,430 | 1,435 | +0.3% |
+| Apr | 1,555 | 1,526 | -1.8% |
+| May | 1,376 | 1,423 | +3.4% |
+| Jun | 1,253 | 1,258 | +0.3% |
+| Jul | 918 | 799 | **-13.0%** |
+| Aug | 1,063 | 894 | **-15.9%** |
+| Sep | 980 | 945 | -3.6% |
+| Oct | 1,046 | 1,072 | +2.5% |
+| Nov | 1,021 | 1,016 | -0.5% |
+| Dec | 1,385 | 1,222 | -11.8% |
+
+**Summer (Jun-Aug): -95 MW. Winter (Nov-Mar): +3 MW.**
+
+Temperature is worth 13-16% in July and August and nothing across winter on net.
+January is 15% *worse* with weather and I have no explanation for it; possibly a
+cold snap the noise handled badly, possibly overfitting.
+
+### Why weather adds so little on average
+
+Temperature is 96% autocorrelated at 24 hours:
+
+| lag | corr with now |
+|---|---:|
+| 1h | +0.996 |
+| **24h** | **+0.962** |
+| 168h | +0.839 |
+
+The strongest feature in the model is `lag_24h` — yesterday's demand at the same
+hour. Yesterday's demand already contains yesterday's weather, and yesterday's
+weather is 96% of today's weather. So explicit temperature is largely
+re-delivering information the model already has.
+
+Measured on daily means:
+
+```
+corr(load today, temp today)      = -0.360
+corr(load today, temp yesterday)  = -0.360
+```
+
+Yesterday's temperature predicts today's demand exactly as well as today's does.
+
+In winter the calendar features carry the rest — it is cold every day, so "it is
+January at 18:00" is already most of the answer. In summer the calendar cannot
+tell a cool August from a hot one, so temperature earns its keep.
+
+A further reason the effect is muted in Germany: cooling degree hours (above
+22 degC) are active in only 5.5% of hours, against 72% for heating. The
+demand-temperature curve is a V, but the right-hand arm is thinly populated.
+
+---
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+
+python run_comparison.py                    # no weather
+python run_comparison.py --weather noisy    # with weather
+python run_comparison.py --backtest         # rolling-origin folds
+python selfcheck.py                         # 13 correctness checks
+```
+
+`era5_temp_de.csv` is committed, so the weather modes run without a Copernicus
+account. `download_era5.py` regenerates the raw NetCDF if wanted; that needs a
+free CDS account and is not required.
+
+---
+
 ## What was checked
 
 - **No lookahead, tested rather than asserted.** `selfcheck.py` spikes one value
@@ -161,3 +185,54 @@ entirely. See Limitations for why this is not a like-for-like comparison.
 - **Committed results reproduce bit-for-bit**, MLP included.
 
 ---
+
+## Limitations
+
+- **No forecast-origin structure.** A single assumed midnight cutoff, so there is
+  no real lead-time verification. That needs issue time, valid time and lead time
+  carried explicitly, with the same valid hour forecast from several origins. It
+  also means error-by-hour cannot separate "forecast decays with horizon" from
+  "afternoon load is harder".
+- **The ENTSO-E comparison is not like-for-like.** Under Regulation 543/2013 the
+  first day-ahead load forecast is published at least two hours before gate
+  closure, around 10:00 on D-1 for Germany. This model assumes midnight, so it
+  has roughly fourteen more hours of demand data. OPSD keeps target timestamps
+  but no forecast vintage, so a given value may be a later revision. Reported
+  because it is the right thing to measure against, not as a win.
+- **ERA5 is reanalysis, not forecast.** It is the best estimate of what the
+  weather *was*, assembled after the fact. `noisy` is a crude stand-in for
+  forecast error: real forecast error is autocorrelated and state-dependent,
+  this noise is neither.
+- **One national temperature number**, an unweighted average over a box that
+  includes the North Sea and part of Poland. A land mask or population weighting
+  would be better.
+- **No wind or solar.** Load is only half the picture in a renewables-heavy grid.
+- **Fold results are not independent.** Folds share training data and load is
+  serially correlated, so 3-of-4 is a stability signal, not four coin flips. A
+  Diebold-Mariano test on paired errors would be the proper check.
+- **The test period contains COVID.** No model trained on 2015-2018 was going to
+  handle spring 2020.
+- **Reproducibility is pinned, not guaranteed.** Versions are pinned in
+  `requirements.txt`; different BLAS or hardware can still shift the last digits.
+
+---
+
+## Bugs found and fixed after review
+
+- **Silent early stopping.** scikit-learn's `HistGradientBoostingRegressor`
+  defaults to `early_stopping="auto"`, which switches itself on above 10,000 rows
+  and carves an internal 10% validation slice out of training data. With 25,800
+  rows it was active without my knowing, so `max_iter=600` was really running ~95
+  iterations and the grid over [300, 600] was tuning a parameter the model
+  ignored. Now explicitly off, so the external validation fold is the only one.
+- **UTC vs local time.** Calendar features were built on UTC timestamps. Germany
+  is UTC+1/+2, so every hour-of-day and is-weekend feature was offset.
+- **Leakage test off by one.** The perturbation check used `>` where it needed
+  `>=`, so a feature using the value at the poked hour would have passed.
+- **NetCDF multi-file read.** `xarray.open_mfdataset` needs dask, which is not a
+  dependency; the single-file path masked it. Files are now opened individually
+  and concatenated.
+- **Two worst days are both Corpus Christi** (2019-06-20, 2020-06-11) — a public
+  holiday in some German states but not all, so it is absent from the national
+  list and treated as a working day. Plausible but unconfirmed; the ablation that
+  would prove it has not been run.
