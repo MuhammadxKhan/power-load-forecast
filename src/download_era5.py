@@ -18,13 +18,13 @@ Setup, once:
 
 Then:
 
-  python download_era5.py
+  python -m src.download_era5
 
 Requests queue on ECMWF's side and can sit there a while, so start this before
-you need it. Each year is roughly 100-200 MB; era5_raw/ is gitignored.
+you need it. Each year is roughly 100-200 MB; data/era5_raw/ is gitignored.
 
-You only need this once. It writes NetCDF into era5_raw/, and the first run of
-run_comparison.py boils that down to era5_temp_de.csv - a small national series.
+You only need this once. It writes NetCDF into data/era5_raw/, and the first run of
+run_comparison.py boils that down to data/era5_temp_de.csv - a small national series.
 Commit that file once you have generated it, so anyone cloning the repo can
 reproduce the weather results without a Copernicus account. It is not in the
 repo until you run this.
@@ -32,10 +32,10 @@ repo until you run this.
 
 import os
 
-from src.data import BBOX
+from .data import BBOX
 
 YEARS = [str(y) for y in range(2015, 2021)]
-OUTDIR = "era5_raw"
+OUTDIR = "data/era5_raw"
 
 
 def main():

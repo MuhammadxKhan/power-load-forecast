@@ -154,7 +154,7 @@ def check_netcdf_reader():
     fixture in ERA5's layout, reads it through the same _from_netcdf the real
     pipeline uses, and deletes it. Two files specifically, because the earlier
     version of _from_netcdf called xarray.open_mfdataset, which needs dask, and
-    dask was never a dependency - so the multi-year path (download_era5.py
+    dask was never a dependency - so the multi-year path (src/download_era5.py
     writes one file per year) would have died with an ImportError the first time
     it met real data. The single-file path worked, which is exactly why nobody
     noticed.

@@ -145,7 +145,7 @@ def load_temperature(index=None):
         if not files:
             raise FileNotFoundError(
                 f"no {ERA5_CACHE} and nothing matching {ERA5_GLOB}.\n"
-                "Run  python download_era5.py  first (free Copernicus account "
+                "Run  python -m src.download_era5  first (free Copernicus account "
                 "needed), or run without --weather.")
         s = _from_netcdf(files)
         s.rename_axis("timestamp").rename("temp_c").to_csv(ERA5_CACHE)
@@ -165,7 +165,7 @@ def _from_netcdf(files):
     """Average the ERA5 grid down to one number per hour.
 
     Deliberately NOT xarray.open_mfdataset. That needs dask, which isn't a
-    dependency here, and download_era5.py writes one file per year - so the
+    dependency here, and src/download_era5.py writes one file per year - so the
     multi-year path died with an ImportError the first time it met real data.
     The single-file path worked, which is exactly why nobody noticed. Opening
     each file and reducing it to a 1-D series costs nothing: the spatial mean
