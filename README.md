@@ -1,10 +1,21 @@
-# Day-ahead electricity load forecasting for Germany
+# Day-ahead load forecasting for Germany, and what weather data is worth to it
 
-Forecasts German hourly electricity demand one day ahead, and tests how much
-weather data actually adds.
+A day-ahead forecast of German hourly electricity demand, built as an instrument
+for measuring the value of weather information rather than as an end in itself.
+
+Temperature enters through four switchable modes - `none`, `lagged`, `noisy`,
+`perfect` - so "how much would better weather information actually buy us?" gets
+a number instead of an assumption. `perfect` is the ceiling: the most any weather
+model, however good, could contribute to this particular decision.
+
+The short answer is that it depends on the season, and that the effect is small
+enough that a single test window cannot resolve it. Establishing both took a
+rolling-origin backtest and a ten-seed study; a single run would have reported
+roughly twice the true effect, in the direction I was hoping for.
 
 Data: [OPSD](https://open-power-system-data.org/) time series (2020-10-06
-release), German hourly load 2015-2020, plus ERA5 2m temperature.
+release), German hourly load 2015-2020, plus ERA5 2m temperature (NetCDF, via
+the Copernicus CDS).
 
 ---
 
@@ -146,6 +157,38 @@ demand-temperature curve is a V, but the right-hand arm is thinly populated.
 
 ---
 
+## Where this connects to AI weather models
+
+The four modes above are a forecast-value framework, and that is the question
+asked of GraphCast, Pangu-Weather, AIFS and the rest once the headline RMSE is
+in: the model verifies better against analysis, but does the downstream user's
+decision actually improve?
+
+This answers it for one downstream user - a German day-ahead load forecast -
+using a stand-in for forecast error rather than a real forecast. The honest
+version of the study swaps `noisy` for archived operational forecasts, IFS and
+an AI model, same issue times and same valid times, and rescores the load
+forecast under each. None of the machinery here changes; only the temperature
+series does.
+
+Three things the numbers already say, worth knowing before running that study:
+
+- **The ceiling is low on average.** `perfect` - exact temperature at the target
+  hour, unattainable by any model - buys 0.4% over no weather at all, and that is
+  inside the seed noise. Most of the information is already in `lag_24h`, because
+  temperature is 96% autocorrelated at 24 hours.
+- **The ceiling is not low in summer.** July and August are 13-16%. A weather
+  model that is better in a heatwave is worth more to this user than its annual
+  RMSE suggests, and an annual average would hide that entirely.
+- **Verification has to be paired and multi-window.** One test period and one
+  seed overstated the effect roughly twofold here.
+
+Two things this is not. The models are gradient boosting and a small MLP over
+tabular features, not weather models. And ERA5 is reanalysis, so nothing here is
+a statement about any operational forecast's skill.
+
+---
+
 ## Running it
 
 ```bash
@@ -157,9 +200,17 @@ python run_comparison.py --backtest         # rolling-origin folds
 python selfcheck.py                         # 13 correctness checks
 ```
 
-`data/era5_temp_de.csv` is committed, so the weather modes run without a Copernicus
-account. `python -m src.download_era5` regenerates the raw NetCDF if wanted; that needs a
-free CDS account and is not required.
+`data/era5_temp_de.csv` is committed, so the weather modes run without a
+Copernicus account. `python -m src.download_era5` regenerates the raw NetCDF if
+wanted; that needs a free CDS account and is not required.
+
+```
+src/          data loading, features, models, evaluation, ERA5 download
+data/         committed inputs - OPSD load extract, derived ERA5 series
+results/      scores, predictions, backtest, figures/
+selfcheck.py  13 correctness checks, synthetic data, no network
+old-models/   the original single-file version, kept for reference
+```
 
 ---
 
