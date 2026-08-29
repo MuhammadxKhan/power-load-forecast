@@ -41,8 +41,8 @@ OPSD_URL = (f"https://data.open-power-system-data.org/time_series/{OPSD_VERSION}
 OPSD_CACHE = "opsd_60min.csv"        # the full 94MB file, gitignored
 OPSD_EXTRACT = "data/de_hourly.csv"  # three columns of it, ~2MB, committed
 
-ERA5_CACHE = "era5_temp_de.csv"    # derived national series, small, committable
-ERA5_GLOB = "era5_raw/*.nc"        # raw download, ~1GB, gitignored
+ERA5_CACHE = "data/era5_temp_de.csv"   # derived national series, small, committable
+ERA5_GLOB = "data/era5_raw/*.nc"       # raw download, ~1GB, gitignored
 
 # A rectangle loosely around Germany. NOT a border - see the note in
 # load_temperature about what that costs.

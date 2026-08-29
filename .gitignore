@@ -5,7 +5,7 @@ opsd_60min.csv
 # raw ERA5 is ~1GB of NetCDF. The derived era5_temp_de.csv is small and SHOULD
 # be committed once generated, so the weather results run without a Copernicus
 # account too.
-era5_raw/
+data/era5_raw/
 
 # results_scores.csv, results_backtest.csv, results_predictions.csv and
 # figures/*.png are NOT ignored. They are committed on purpose - without them

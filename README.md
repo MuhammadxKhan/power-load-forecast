@@ -157,7 +157,7 @@ python run_comparison.py --backtest         # rolling-origin folds
 python selfcheck.py                         # 13 correctness checks
 ```
 
-`era5_temp_de.csv` is committed, so the weather modes run without a Copernicus
+`data/era5_temp_de.csv` is committed, so the weather modes run without a Copernicus
 account. `download_era5.py` regenerates the raw NetCDF if wanted; that needs a
 free CDS account and is not required.
 
