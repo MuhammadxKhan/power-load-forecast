@@ -158,7 +158,7 @@ python selfcheck.py                         # 13 correctness checks
 ```
 
 `data/era5_temp_de.csv` is committed, so the weather modes run without a Copernicus
-account. `download_era5.py` regenerates the raw NetCDF if wanted; that needs a
+account. `python -m src.download_era5` regenerates the raw NetCDF if wanted; that needs a
 free CDS account and is not required.
 
 ---
