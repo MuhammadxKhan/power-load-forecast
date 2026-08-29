@@ -46,6 +46,8 @@ def main():
     p.add_argument("--no-plots", action="store_true")
     args = p.parse_args()
 
+    os.makedirs(RESULTS, exist_ok=True)
+
     print("Loading German hourly load...")
     frame = load_frame()
     load = frame["load_mw"]
@@ -120,21 +122,22 @@ def main():
         print(wide.round(0).to_string())
         print("\nAcross folds:")
         print(summary.round(1).to_string())
-        tidy.to_csv("results_backtest.csv", index=False)
+        tidy.to_csv("results/backtest.csv", index=False)
 
     if not args.no_plots:
         made = all_plots(yte, preds, temp)
         print("\nWrote " + ", ".join(made))
 
-    table.to_csv("results_scores.csv")
-    pd.DataFrame(preds).assign(actual=yte).to_csv("results_predictions.csv")
-    print("Wrote results_scores.csv and results_predictions.csv")
+    table.to_csv("results/scores.csv")
+    pd.DataFrame(preds).assign(actual=yte).to_csv("results/predictions.csv")
+    print("Wrote results/scores.csv and results/predictions.csv")
 
 
 # --------------------------------------------------------------------------
 # plots
 # --------------------------------------------------------------------------
-OUT = "figures"
+RESULTS = "results"
+OUT = os.path.join(RESULTS, "figures")
 TZ = "Europe/Berlin"
 
 
