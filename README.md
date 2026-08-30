@@ -1,23 +1,18 @@
 # Day-ahead load forecasting for Germany, and what weather data is worth to it
 
-A day-ahead forecast of German hourly electricity demand, built as an instrument
-for measuring the value of weather information rather than as an end in itself.
+A day-ahead forecast of German hourly electricity demand, used to measure what
+better weather information is actually worth.
 
 Temperature enters through four switchable modes - `none`, `lagged`, `noisy`,
-`perfect` - so "how much would better weather information actually buy us?" gets
-a number instead of an assumption. `perfect` is the ceiling: the most any weather
-model, however good, could contribute to this particular decision.
+`perfect` - so the question gets a number rather than an assumption. `perfect`
+is the ceiling: the most any weather model could contribute.
 
-The short answer is that it depends on the season. Temperature is worth 13-16%
-in July and August and nothing at all across winter, and even the summer gain is
-only about five times the fold-to-fold spread. Establishing that took a
-ten-seed study and a rolling-origin backtest, because the single-window number on
-its own could not tell a real effect from a lucky noise draw.
+It depends on the season. Temperature is worth 13-16% in July and August and
+nothing across winter, and the fold-to-fold range is about five times the mean
+effect. Establishing that took a ten-seed study and a rolling-origin backtest;
+the single-window number could not separate a real effect from a lucky draw.
 
-Every number below is regenerated from the code in this repo, in the pinned
-environment in `requirements.txt`. An earlier version of this README carried
-figures from a superseded code state that no longer reproduced - they have all
-been replaced, and the commands to regenerate each table are given alongside it.
+Every number below regenerates from this code in the pinned environment.
 
 Data: [OPSD](https://open-power-system-data.org/) time series (2020-10-06
 release), German hourly load 2015-2020, plus ERA5 2m temperature (NetCDF, via
@@ -101,18 +96,9 @@ it was checked two further ways.
 
 `noisy` across ten random seeds, gradient boosting:
 
-| | MAE (MW) |
-|---|---:|
-| mean | 1,181.7 |
-| std | 4.1 |
-| min | 1,174.5 |
-| max | 1,185.5 |
-| **spread** | **11.0** |
-
-It survives. The spread from changing nothing but the noise draw is 11.0 MW,
-against a mean gain of 18.9 MW - so the effect is larger than the measurement
-wobble, though not by much. Seed 0, the default a single run reports, lands 6th
-of ten: representative rather than flattering.
+Mean 1,181.7 MW, std 4.1, range 1,174.5 to 1,185.5 - a spread of **11.0 MW**
+against a mean gain of 18.9. It survives, but not by much. Seed 0, the default a
+single run reports, lands 6th of ten: representative rather than flattering.
 
 Reproduce with `--seed`:
 
@@ -120,9 +106,8 @@ Reproduce with `--seed`:
 for s in 0 1 2 3 4 5 6 7 8 9; do python run_comparison.py --weather noisy --seed $s --no-plots; done
 ```
 
-This check is worth more than its result. Had the spread come out wider than the
-gain, the single-window number would have been noise reported as a finding, and
-nothing downstream of it would have meant anything.
+The check matters more than its result: had the spread exceeded the gain, the
+single-window number would have been noise reported as a finding.
 
 ### Across rolling folds
 
@@ -175,71 +160,56 @@ Temperature is 96% autocorrelated at 24 hours:
 | **24h** | **+0.962** |
 | 168h | +0.839 |
 
-The strongest feature in the model is `lag_24h` — yesterday's demand at the same
-hour. Yesterday's demand already contains yesterday's weather, and yesterday's
-weather is 96% of today's weather. So explicit temperature is largely
-re-delivering information the model already has.
-
-Measured on daily means:
+The strongest feature is `lag_24h`. Yesterday's demand already contains
+yesterday's weather, and yesterday's weather is 96% of today's - so explicit
+temperature largely re-delivers what the model has. On daily means:
 
 ```
 corr(load today, temp today)      = -0.358
 corr(load today, temp yesterday)  = -0.360
 ```
 
-Yesterday's temperature predicts today's demand exactly as well as today's does.
+Yesterday's temperature predicts today's demand as well as today's does.
 
-In winter the calendar features carry the rest — it is cold every day, so "it is
-January at 18:00" is already most of the answer. In summer the calendar cannot
-tell a cool August from a hot one, so temperature earns its keep.
-
-A further reason the effect is muted in Germany: cooling degree hours (above
-22 degC) are active in only 5.5% of hours, against 72% for heating. The
-demand-temperature curve is a V, but the right-hand arm is thinly populated.
+In winter the calendar carries the rest - it is cold every day, so "January at
+18:00" is most of the answer. In summer the calendar cannot tell a cool August
+from a hot one, so temperature earns its keep. Cooling degree hours (above
+22 degC) are also active in only 5.5% of hours against 72% for heating: the
+demand-temperature curve is a V with a thinly populated right arm.
 
 ![German hourly demand against temperature, coloured by local hour](results/figures/load_vs_temperature.png)
 
-The V is visible but lopsided. Below about 0 degC demand climbs steeply; above
-the 15 degC minimum it rises again far more gently, and there is barely any data
-past 25 degC to fit a cooling response to. The colouring is local hour, and the
-vertical spread it produces at every temperature is the point: hour of day moves
-demand by more than 20 GW, temperature by perhaps 10 GW across the whole range.
-That is the ratio a temperature feature is fighting against.
+The V is lopsided: steep below 0 degC, far shallower above the 15 degC minimum,
+and almost no data past 25 degC to fit a cooling response to. The colouring is
+local hour, and the vertical spread it produces is the point - hour of day moves
+demand by over 20 GW, temperature by perhaps 10 GW across its whole range.
 
 ---
 
 ## Where this connects to AI weather models
 
-The four modes above are a forecast-value framework, and that is the question
-asked of GraphCast, Pangu-Weather, AIFS and the rest once the headline RMSE is
-in: the model verifies better against analysis, but does the downstream user's
-decision actually improve?
+The four modes are a forecast-value framework, which is the question asked of
+GraphCast, Pangu-Weather and AIFS once the headline RMSE is in: the model
+verifies better against analysis, but does the downstream decision improve?
 
-This answers it for one downstream user - a German day-ahead load forecast -
-using a stand-in for forecast error rather than a real forecast. The honest
-version of the study swaps `noisy` for archived operational forecasts, IFS and
-an AI model, same issue times and same valid times, and rescores the load
-forecast under each. None of the machinery here changes; only the temperature
-series does.
+The proper study swaps `noisy` for archived operational forecasts - IFS and an
+AI model, same issue and valid times - and rescores under each. Only the
+temperature series changes; none of the machinery here does.
 
-Three things the numbers already say, worth knowing before running that study:
+What the numbers already say:
 
-- **The ceiling is low on average.** `perfect` - exact temperature at the target
-  hour, unattainable by any model - buys 2.5% over no weather at all. Most of the
-  information is already in `lag_24h`, because temperature is 96% autocorrelated
-  at 24 hours, and yesterday's demand already contains yesterday's weather.
-- **The ceiling is not low in summer.** July and August are 13-16%. A weather
-  model that is better in a heatwave is worth more to this user than its annual
-  RMSE suggests, and an annual average would hide that entirely.
-- **Verification has to be paired and multi-window.** The gain here (19 MW) and
-  the spread from reseeding alone (11 MW) are the same order of magnitude, and
-  across rolling folds the effect is positive in only two of four. A single
-  window would have supported a much more confident claim than the evidence
-  carries.
+- **The ceiling is low on average.** `perfect`, unattainable by any model, buys
+  2.5%. Temperature is 96% autocorrelated at 24h and `lag_24h` already carries
+  yesterday's weather.
+- **It is not low in summer.** July and August are 13-16%. A model that is
+  better in a heatwave is worth more than its annual RMSE suggests.
+- **Verification must be paired and multi-window.** The gain (19 MW) and the
+  reseeding spread (11 MW) are the same order, and the effect is positive in
+  only two folds of four.
 
-Two things this is not. The models are gradient boosting and a small MLP over
-tabular features, not weather models. And ERA5 is reanalysis, so nothing here is
-a statement about any operational forecast's skill.
+Not claimed: these are gradient boosting and a small MLP over tabular features,
+not weather models, and ERA5 is reanalysis - nothing here measures any
+operational forecast's skill.
 
 ---
 
@@ -304,10 +274,6 @@ old-models/   the original single-file version, kept for reference
   has roughly fourteen more hours of demand data. OPSD keeps target timestamps
   but no forecast vintage, so a given value may be a later revision. Reported
   because it is the right thing to measure against, not as a win.
-- **ERA5 is reanalysis, not forecast.** It is the best estimate of what the
-  weather *was*, assembled after the fact. `noisy` is a crude stand-in for
-  forecast error: real forecast error is autocorrelated and state-dependent,
-  this noise is neither.
 - **One national temperature number**, an unweighted average over a box that
   includes the North Sea and part of Poland. A land mask or population weighting
   would be better.
@@ -315,16 +281,15 @@ old-models/   the original single-file version, kept for reference
 - **Fold results are not independent.** Folds share training data and load is
   serially correlated, so 2-of-4 is a weak stability signal, not four coin
   flips. A Diebold-Mariano test on paired errors would be the proper check.
-- **`noisy` is easier than a real forecast, and the model can tell.** The
-  injected error is independent hour to hour, but the feature table also carries
-  `temp_roll_mean_24h`. Averaging 24 independent draws cuts the error from
-  1.00 degC to 0.21 degC - measured, and exactly the 1/sqrt(24) you would
-  predict - so correlation with true temperature rises from 0.991 hourly to
-  0.9995 on the daily mean. The model partially undoes the noise it was given.
-  Real forecast error is autocorrelated and does not average away like this, so
-  the `noisy` gain is an optimistic estimate of what an imperfect forecast buys.
-  Fixing it means an AR(1) or seasonally-varying error model, or better, an
-  archived operational forecast.
+- **ERA5 is reanalysis, and `noisy` understates its own uncertainty.** ERA5 is
+  the best estimate of what the weather *was*. The synthetic error on top of it
+  is independent hour to hour, so `temp_roll_mean_24h` averages it from 1.00 to
+  0.21 degC (measured; 1/sqrt(24)); real forecast error is autocorrelated and
+  does not. AR(1) error at phi=0.95, same marginal sigma, barely moves the mean
+  gain (-16.1 MW against -18.9) but doubles the spread across draws (23.1 against
+  11.0) - under a realistic error structure the spread exceeds the effect. The
+  point estimate survives; the confidence in it does not. An archived
+  operational forecast is the real fix.
 - **Day-of-year is encoded on a 365-day cycle**, so leap years drift by one day
   in the seasonal sine and cosine. The effect is negligible but it is wrong.
 - **The test period contains COVID.** No model trained on 2015-2018 was going to
