@@ -183,7 +183,7 @@ re-delivering information the model already has.
 Measured on daily means:
 
 ```
-corr(load today, temp today)      = -0.360
+corr(load today, temp today)      = -0.358
 corr(load today, temp yesterday)  = -0.360
 ```
 
@@ -196,6 +196,15 @@ tell a cool August from a hot one, so temperature earns its keep.
 A further reason the effect is muted in Germany: cooling degree hours (above
 22 degC) are active in only 5.5% of hours, against 72% for heating. The
 demand-temperature curve is a V, but the right-hand arm is thinly populated.
+
+![German hourly demand against temperature, coloured by local hour](results/figures/load_vs_temperature.png)
+
+The V is visible but lopsided. Below about 0 degC demand climbs steeply; above
+the 15 degC minimum it rises again far more gently, and there is barely any data
+past 25 degC to fit a cooling response to. The colouring is local hour, and the
+vertical spread it produces at every temperature is the point: hour of day moves
+demand by more than 20 GW, temperature by perhaps 10 GW across the whole range.
+That is the ratio a temperature feature is fighting against.
 
 ---
 
@@ -304,8 +313,20 @@ old-models/   the original single-file version, kept for reference
   would be better.
 - **No wind or solar.** Load is only half the picture in a renewables-heavy grid.
 - **Fold results are not independent.** Folds share training data and load is
-  serially correlated, so 3-of-4 is a stability signal, not four coin flips. A
-  Diebold-Mariano test on paired errors would be the proper check.
+  serially correlated, so 2-of-4 is a weak stability signal, not four coin
+  flips. A Diebold-Mariano test on paired errors would be the proper check.
+- **`noisy` is easier than a real forecast, and the model can tell.** The
+  injected error is independent hour to hour, but the feature table also carries
+  `temp_roll_mean_24h`. Averaging 24 independent draws cuts the error from
+  1.00 degC to 0.21 degC - measured, and exactly the 1/sqrt(24) you would
+  predict - so correlation with true temperature rises from 0.991 hourly to
+  0.9995 on the daily mean. The model partially undoes the noise it was given.
+  Real forecast error is autocorrelated and does not average away like this, so
+  the `noisy` gain is an optimistic estimate of what an imperfect forecast buys.
+  Fixing it means an AR(1) or seasonally-varying error model, or better, an
+  archived operational forecast.
+- **Day-of-year is encoded on a 365-day cycle**, so leap years drift by one day
+  in the seasonal sine and cosine. The effect is negligible but it is wrong.
 - **The test period contains COVID.** No model trained on 2015-2018 was going to
   handle spring 2020.
 - **Reproducibility is pinned, not guaranteed.** Versions are pinned in
