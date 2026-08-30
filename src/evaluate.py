@@ -83,7 +83,7 @@ def mape(a, b):
     return float(np.mean(np.abs((a - b) / a)) * 100)
 
 
-def bias(pred, y):
+def bias(y, pred):
     """Mean signed error. Positive means the forecast runs high. MAE hides this
     completely - a forecast can have a fine MAE and still be systematically
     over, which matters if you're buying generation against it."""
@@ -120,7 +120,7 @@ def score_table(y, preds, base="seasonal_naive"):
     assert_same_rows(y, preds)
     b = preds[base]
     rows = {n: {"MAE_MW": mae(y, pr), "RMSE_MW": rmse(y, pr), "MAPE_%": mape(y, pr),
-                "bias_MW": bias(pr, y), "skill_vs_naive": skill(y, pr, b)}
+                "bias_MW": bias(y, pr), "skill_vs_naive": skill(y, pr, b)}
             for n, pr in preds.items()}
     return pd.DataFrame(rows).T.sort_values("MAE_MW")
 
@@ -168,7 +168,7 @@ def worst_days(y, pred, n=5):
 # Two things this is NOT. Not a significance test - that's a Diebold-Mariano
 # test on the paired errors, accounting for serial correlation, and it isn't
 # done here. And the folds aren't independent trials: they share training data
-# and load is serially correlated, so winning three of four is a stability
+# and load is serially correlated, so a fold majority is a stability
 # signal, not four coin flips. A reversal between folds can equally mean
 # genuine regime-dependent performance rather than noise.
 # --------------------------------------------------------------------------
