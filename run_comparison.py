@@ -8,6 +8,7 @@ seasonal-naive baseline and a published ENTSO-E-derived day-ahead benchmark.
     python run_comparison.py --weather noisy        # + synthetic temperature error (sensitivity)
     python run_comparison.py --weather perfect      # perfect prognosis upper bound
     python run_comparison.py --weather noisy --backtest
+    python run_comparison.py --weather noisy --seed 7   # a different noise draw
     python selfcheck.py                             # checks, no download
 
 Identical ground means the features and the split come from src/features.py, so
@@ -44,6 +45,10 @@ def main():
     p.add_argument("--backtest", action="store_true",
                    help="rolling-origin folds as well as the single split (slow)")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument("--seed", type=int, default=0,
+                   help="seed for the synthetic error in --weather noisy. The "
+                        "reported effect moves by more than the effect itself, "
+                        "so sweep it rather than trusting one run.")
     args = p.parse_args()
 
     os.makedirs(RESULTS, exist_ok=True)
@@ -60,7 +65,7 @@ def main():
               f"mean {temp.mean():.1f} C   (mode: {args.weather})")
     print()
 
-    X, y = build_features(load, temp, weather_mode=args.weather)
+    X, y = build_features(load, temp, weather_mode=args.weather, seed=args.seed)
     print(f"{X.shape[1]} features, {len(X):,} usable rows (first 3 weeks go to lags)\n")
 
     (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(
