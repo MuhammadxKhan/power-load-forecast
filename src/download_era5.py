@@ -3,31 +3,21 @@ Fetch ERA5 2m temperature over Germany, one NetCDF per year, into era5_raw/.
 
 Setup, once:
 
-  1. Make a free account at https://cds.climate.copernicus.eu
-  2. Copy your personal access token from https://cds.climate.copernicus.eu/profile
-  3. Put it in a file called .cdsapirc in your home directory:
+  1. Free account at https://cds.climate.copernicus.eu
+  2. Put your token from https://cds.climate.copernicus.eu/profile into
+     ~/.cdsapirc (C:\\Users\\<you>\\.cdsapirc on Windows, no extension):
 
          url: https://cds.climate.copernicus.eu/api
          key: <your-token>
 
-     On Windows that's C:\\Users\\<you>\\.cdsapirc - no extension, and Notepad
-     will try to add .txt, so save it as "All files".
-  4. Open the ERA5 hourly single-levels dataset page once and accept the
-     licence, or every request comes back 403.
-  5. pip install cdsapi
+  3. Open the ERA5 hourly single-levels page once and accept the licence, or
+     every request returns 403.
+  4. pip install cdsapi
 
-Then:
-
-  python -m src.download_era5
-
-Requests queue on ECMWF's side and can sit there a while, so start this before
-you need it. Each year is roughly 100-200 MB; data/era5_raw/ is gitignored.
-
-You only need this once. It writes NetCDF into data/era5_raw/, and the first run of
-run_comparison.py boils that down to data/era5_temp_de.csv - a small national series.
-Commit that file once you have generated it, so anyone cloning the repo can
-reproduce the weather results without a Copernicus account. It is not in the
-repo until you run this.
+Then `python -m src.download_era5`. Requests queue on ECMWF's side and can sit
+a while. Each year is 100-200 MB and data/era5_raw/ is gitignored; the first run
+of run_comparison.py reduces it to data/era5_temp_de.csv, which is committed so
+nobody else needs an account.
 """
 
 import os
