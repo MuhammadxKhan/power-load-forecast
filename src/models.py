@@ -6,26 +6,18 @@ Each one exposes exactly:
     fit_ridge / fit_gbm / fit_mlp
         (Xtr, ytr, Xva, yva, Xfit, yfit, verbose) -> (predict_fn, info)
 
-which runs a small four-configuration grid on the validation fold, refits once
-on train+val, and hands back something that predicts. They sit in one file so
-you can see at a glance that the signatures really are identical - that claim is
-the whole point of the comparison, and it's easier to check when they're
-adjacent than when they're in three separate files.
+Each runs a four-configuration grid on the validation fold, refits once on
+train+val, and returns something that predicts. One file, so the identical
+signatures are checkable at a glance.
 
-None of them is ever handed the test set, so none of them can touch it. That's
-structural, not a promise.
+None is ever handed the test set, so none can touch it - structural, not a
+promise. Ridge and the MLP both standardise inputs on whatever fold they are
+fitted on.
 
-Ridge and the MLP both standardise their inputs. Ridge does it inside a
-scikit-learn pipeline, so the scaler is fitted on whatever fold the pipeline is
-fitted on; the MLP does the same thing by hand in _train. Neither can see the
-test fold because neither is given it.
-
-The MLP is deliberately plain - dense layers, ReLU, Adam, early stopping, fixed
-seed, no recurrence or attention or schedulers. It's here to be a fair second
-data point next to the GBM, not to win, and it isn't tuned until it does. Its
-loss is MSE because HistGradientBoostingRegressor minimises squared error; if
-they minimised different things, a gap between them would be about the loss
-function rather than the model.
+The MLP is deliberately plain: dense, ReLU, Adam, early stopping, fixed seed.
+Its loss is MSE because HistGradientBoostingRegressor minimises squared error;
+different losses would make any gap between them a fact about the loss rather
+than the model.
 """
 
 import numpy as np

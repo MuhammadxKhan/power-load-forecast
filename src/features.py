@@ -1,39 +1,32 @@
 """
 Features and the train/val/test split.
 
-This is the only place either of those is defined. Every model imports from
-here, so no model can train on a different feature set or a different split
-than the one it's compared against.
+Defined only here, so no model can train on a different feature set or split
+than the one it is compared against.
 
-Two rules everything hangs on.
+Two rules.
 
-1. The load rule. We forecast day D at midnight, so the newest demand figure we
-   have is 23:00 on day D-1. No feature touches the load series at a lag under
-   24 hours. selfcheck.py pokes the series and checks nothing reacts too soon.
+1. Load. We forecast day D at midnight, so the newest demand figure is 23:00 on
+   D-1. No feature touches the load series at a lag under 24 hours.
+   selfcheck.py pokes the series and checks nothing reacts too soon.
 
-2. Weather is different, and this is the bit worth being careful about. You
-   genuinely do have a weather forecast for tomorrow when you make a load
-   forecast - that is how it works in practice. So temperature at the target
-   hour is not automatically cheating. What IS cheating is using ERA5's
-   after-the-fact reanalysis and pretending it was a forecast, because a real
-   forecast has error in it. weather_mode below makes the choice explicit
-   instead of burying it:
+2. Weather. You genuinely do have a forecast for tomorrow, so target-hour
+   temperature is not automatically cheating; using ERA5 reanalysis and calling
+   it a forecast is. weather_mode makes the choice explicit:
 
-     "lagged"   only temperature from 24h+ ago. Nothing to argue about.
-     "noisy"    target-hour temperature with synthetic error added. A
-                SENSITIVITY TEST, not a forecast - see below.
-     "perfect"  target-hour temperature exactly. Perfect prognosis - an upper
-                bound on what weather can buy you, not a deployable result.
-                The gap between "perfect" and "noisy" is the cost of the
-                imposed error model, NOT the measured cost of real forecast
-                error. Only an archived forecast answers that.
-     "none"     no weather at all, i.e. the old model.
+     "none"     no weather at all
+     "lagged"   temperature from 24h+ ago only
+     "noisy"    target-hour temperature plus synthetic error - a sensitivity
+                test, not a forecast
+     "perfect"  target-hour temperature exactly - an upper bound, not a
+                deployable result
 
-Everything calendar-related is computed in Europe/Berlin, not UTC. The index
-stays UTC because that has no daylight-saving ambiguity, but German demand
-follows German clocks: 23:00 UTC on 31 December is already New Year's Day in
-Germany. Getting this wrong mislabels the hour on every single row and the
-weekday on about 7% of them.
+   The perfect/noisy gap is the cost of the imposed error model, not of real
+   forecast error. Only an archived forecast answers that.
+
+Calendar features use Europe/Berlin; the index stays UTC to avoid DST
+ambiguity. 23:00 UTC on 31 December is already New Year's Day in Germany, and
+getting this wrong mislabels the hour on every row and the weekday on ~7%.
 """
 
 import numpy as np
@@ -86,18 +79,14 @@ CDD_BASE = 22.0
 
 
 def degree_hours(temp_c):
-    """Heating and cooling degree HOURS - one-sided hinge terms on hourly
-    temperature.
+    """Heating and cooling degree HOURS - one-sided hinges on hourly temperature.
 
-    Not degree days in the conventional sense. A proper heating degree day uses
-    the DAILY MEAN and accumulates over the day (see Eurostat); these are
-    per-hour hinges on the instantaneous value. Same idea, different unit, and
-    calling them degree days would be wrong.
+    Not degree days: those use the daily mean and accumulate over the day (see
+    Eurostat). These are per-hour hinges on the instantaneous value.
 
-    They exist because load against temperature is V-shaped: demand rises when
-    it's cold (heating) and again when it's hot (cooling). A straight line can't
-    fit a V, so ridge in particular struggles with raw temperature. Splitting it
-    into two one-sided variables turns the V into two straight arms.
+    Load against temperature is V-shaped - demand rises when cold and again when
+    hot - and a straight line cannot fit a V, which ridge in particular
+    struggles with. Two one-sided variables turn the V into two straight arms.
     """
     return np.maximum(0.0, HDD_BASE - temp_c), np.maximum(0.0, temp_c - CDD_BASE)
 

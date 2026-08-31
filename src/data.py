@@ -3,28 +3,21 @@ Getting data in. Demand from OPSD, temperature from ERA5. No features here.
 
 Two columns come out of the OPSD file:
 
-  load_mw               what demand actually was (the target)
-  benchmark_mw          a published day-ahead load forecast, derived by OPSD
-                        from ENTSO-E Transparency data. Careful how this gets
-                        described: it's OPSD's aggregation, not a raw untouched
-                        TSO series, and the file keeps target timestamps but no
-                        forecast vintage - so there's no telling whether a value
-                        is the first issuance or a later revision. Under
-                        Regulation 543/2013 the first publication is due at
-                        least two hours before day-ahead gate closure (12:00 for
-                        Germany, so about 10:00 on D-1). Either way its
-                        information cutoff is earlier than this model's assumed
-                        midnight, so beating it is not a like-for-like win.
+  load_mw       what demand actually was (the target)
+  benchmark_mw  a published day-ahead load forecast - OPSD's aggregation of
+                ENTSO-E Transparency data, not a raw TSO series. Target
+                timestamps are kept but no forecast vintage, so a value may be
+                a later revision. Under Regulation 543/2013 first publication
+                is due at least two hours before gate closure (~10:00 on D-1
+                for Germany), so its information cutoff is earlier than this
+                model's assumed midnight and beating it is not like-for-like.
 
-Temperature is ERA5, ECMWF's reanalysis - their best after-the-fact estimate of
-what the weather was. Native atmospheric resolution about 31 km, served on a
-0.25 degree grid, hourly, as NetCDF. xarray reads it.
+Temperature is ERA5, ECMWF's reanalysis: their best after-the-fact estimate of
+what the weather was. ~31 km native resolution on a 0.25 degree grid, hourly.
 
-Only Germany. An earlier version had a --country flag that applied German
-holidays to whatever you asked for, and OPSD's British column isn't even called
-what that flag assumed (GB_GBN_..., not GB_...), so it never worked. Removed
-rather than half-fixed: adding a country needs a column name, a timezone AND a
-holiday list, all three.
+Germany only. An earlier --country flag applied German holidays to whatever you
+asked for and used a column name OPSD does not have, so it never worked. Adding
+a country needs a column name, a timezone and a holiday list, all three.
 """
 
 import glob
@@ -104,19 +97,13 @@ def load_frame():
 
 
 def _fill_gaps(s):
-    """Fill interior gaps from earlier values only. A LEADING gap is the one
-    exception and gets filled backwards, because there is nothing earlier.
+    """Fill interior gaps forward only; a leading gap is filled backwards.
 
-    The obvious thing is interpolate(), and that's what I had. But linear
-    interpolation fills a hole from the valid values on BOTH sides, weighted by
-    position, so the filled number carries information from the future - and a
-    lag_24h feature a day later would then be built on data only 18 hours old,
-    breaking the 24-hour rule everything here rests on.
-
-    On the pinned OPSD package the German load series has NO missing hours once
-    it's trimmed to its first and last valid reading, so on this data it changes
-    nothing at all. It's here because the code shouldn't depend on the data
-    happening to be clean.
+    Not interpolate(): linear interpolation fills from both sides, so the value
+    carries information from the future and a lag_24h feature a day later would
+    rest on data 18 hours old. The pinned OPSD package has no missing hours once
+    trimmed, so this changes nothing here - it exists so the code does not
+    depend on the data being clean.
     """
     return s.ffill().bfill()
 
@@ -130,12 +117,10 @@ def load_temperature(index=None):
     Reads the small derived CSV if it's there, otherwise builds it from the
     NetCDF in era5_raw/ and writes it out so the slow path happens once.
 
-    Worth knowing what this average is: a plain unweighted mean over a
-    RECTANGLE, not over Germany. No land mask, no border check, so it includes
-    sea and a good deal of Poland, Czechia, Austria and France, and it weights
-    every cell equally when Berlin's temperature clearly matters more to German
-    demand than the North Sea's. It's a national temperature PROXY. A land mask
-    is the obvious first fix, population weighting the better second one.
+    A proxy, not a national mean: an unweighted average over a rectangle, so
+    it includes sea and parts of Poland, Czechia, Austria and France, and
+    weights Berlin the same as the North Sea. A land mask is the obvious first
+    fix, population weighting the better one.
     """
     if os.path.exists(ERA5_CACHE):
         s = pd.read_csv(ERA5_CACHE, parse_dates=["timestamp"]).set_index("timestamp")["temp_c"]
