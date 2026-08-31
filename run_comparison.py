@@ -33,7 +33,9 @@ from src.evaluate import (backtest_folds, backtest_run, backtest_summary,
 from src.features import build_features, chronological_split
 from src.models import ALL_MODELS
 
-
+RESULTS = "results"
+OUT = os.path.join(RESULTS, "figures")
+TZ = "Europe/Berlin"
 
 
 def main():
@@ -127,25 +129,22 @@ def main():
         print(wide.round(0).to_string())
         print("\nAcross folds:")
         print(summary.round(1).to_string())
-        tidy.to_csv("results/backtest.csv", index=False)
+        tidy.insert(0, "weather", args.weather)
+        tidy.to_csv(os.path.join(RESULTS, "backtest.csv"), index=False)
 
     if not args.no_plots:
         made = all_plots(yte, preds, temp)
         print("\nWrote " + ", ".join(made))
 
-    table.to_csv("results/scores.csv")
-    pd.DataFrame(preds).assign(actual=yte).to_csv("results/predictions.csv")
+    table.to_csv(os.path.join(RESULTS, "scores.csv"))
+    pd.DataFrame(preds).assign(actual=yte).to_csv(
+        os.path.join(RESULTS, "predictions.csv"))
     print("Wrote results/scores.csv and results/predictions.csv")
 
 
 # --------------------------------------------------------------------------
 # plots
 # --------------------------------------------------------------------------
-RESULTS = "results"
-OUT = os.path.join(RESULTS, "figures")
-TZ = "Europe/Berlin"
-
-
 def _save(fig, name):
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, name)
