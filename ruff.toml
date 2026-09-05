@@ -1,0 +1,13 @@
+# Errors only: pyflakes catches unused imports, undefined names and shadowed
+# builtins, E4 catches import faults and E9 syntax. Style rules are left off on
+# purpose - a lint job that fails on line length is one you learn to ignore.
+line-length = 100
+
+# archived single-file version, kept for reference and not maintained
+exclude = ["old-models"]
+
+[lint]
+select = ["F", "E4", "E9"]
+
+[lint.per-file-ignores]
+"run_comparison.py" = ["E402"]   # matplotlib.use("Agg") must precede pyplot
