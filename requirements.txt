@@ -10,6 +10,9 @@ scikit-learn==1.8.0
 torch==2.13.0
 matplotlib==3.10.8
 
+# state-level public holidays, for the regional holiday share in features.py
+holidays==0.105
+
 # reading the raw ERA5 download. Only needed once - after that the derived
 # era5_temp_de.csv is what gets read.
 xarray==2026.7.0

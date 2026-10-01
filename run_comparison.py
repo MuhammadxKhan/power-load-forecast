@@ -10,6 +10,7 @@ seasonal-naive baseline and a published ENTSO-E-derived day-ahead benchmark.
     python run_comparison.py --weather noisy --backtest
     python run_comparison.py --weather noisy --seed 7   # a different noise draw
     python run_comparison.py --issue midnight       # the original midnight setup
+    python run_comparison.py --holidays national    # without the regional holidays
     python selfcheck.py                             # checks, no download
 
 Identical ground means the features and the split come from src/features.py, so
@@ -46,6 +47,7 @@ def main():
     p.add_argument("--issue", default="10am", choices=ISSUES,
                    help="when the forecast for day D is made: 10:00 on D-1 "
                         "(same time as the TSO forecast) or midnight")
+    p.add_argument("--holidays", default="regional", choices=["regional", "national"])
     p.add_argument("--val-start", default="2018-01-01")
     p.add_argument("--test-start", default="2019-01-01")
     p.add_argument("--backtest", action="store_true",
@@ -64,7 +66,7 @@ def main():
     load = frame["load_mw"]
     print(f"{len(load):,} hours, {load.index[0]:%Y-%m-%d} to {load.index[-1]:%Y-%m-%d}")
     when = "10:00 on D-1" if args.issue == "10am" else "midnight"
-    print(f"forecast issued at {when}")
+    print(f"forecast issued at {when}, {args.holidays} holidays")
 
     temp = None
     if args.weather != "none":
@@ -74,7 +76,8 @@ def main():
     print()
 
     X, y = build_features(load, temp, weather_mode=args.weather, seed=args.seed,
-                          issue=args.issue)
+                          issue=args.issue,
+                          regional_holidays=args.holidays == "regional")
     print(f"{X.shape[1]} features, {len(X):,} usable rows (first 3 weeks go to lags)\n")
 
     (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(
@@ -157,12 +160,13 @@ def save_backtest(tidy, args):
     one overwriting the first."""
     path = os.path.join(RESULTS, "backtest.csv")
     tidy = tidy.copy()
-    for col in ("issue", "weather"):
+    for col in ("holidays", "issue", "weather"):
         tidy.insert(0, col, getattr(args, col))
     if os.path.exists(path):
         old = pd.read_csv(path)
-        if {"weather", "issue"} <= set(old.columns):
-            same = (old["weather"] == args.weather) & (old["issue"] == args.issue)
+        if {"weather", "issue", "holidays"} <= set(old.columns):
+            same = ((old["weather"] == args.weather) & (old["issue"] == args.issue)
+                    & (old["holidays"] == args.holidays))
             tidy = pd.concat([old[~same], tidy], ignore_index=True)
     tidy.to_csv(path, index=False)
 

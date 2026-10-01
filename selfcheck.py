@@ -18,7 +18,7 @@ from src.data import _from_netcdf, fake_frame, fake_temperature
 from src.evaluate import (assert_same_rows, baseline_preds, mae,
                           mae_by_target_hour, predict, seasonal_naive, skill)
 from src.features import (ISSUES, build_features, chronological_split,
-                          degree_hours, newest_usable,
+                          degree_hours, holiday_share, newest_usable,
                           usable_temperature)
 from src.models import ALL_MODELS, fit_mlp
 
@@ -90,6 +90,11 @@ def check_local_time(load):
         assert X.loc[nye, "hour"] == 0, "local hour should be 0"
     print("  [ok] calendar features are on Europe/Berlin, not UTC")
 
+    # regional holidays: Corpus Christi is a holiday for about two thirds of
+    # the country, Christmas for all of it, an ordinary Tuesday for nobody
+    s = holiday_share(pd.DatetimeIndex(["2016-05-26", "2016-12-25", "2016-07-05"]))
+    assert 0.5 < s[0] < 0.8 and s[1] == 1.0 and s[2] == 0.0, f"holiday shares look wrong: {s}"
+    print("  [ok] regional holiday shares (Corpus Christi 0.64, Christmas 1, normal day 0)")
 
 
 def check_feature_table(load):

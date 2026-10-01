@@ -36,6 +36,9 @@ ambiguity. 23:00 UTC on 31 December is already New Year's Day in Germany, and
 getting this wrong mislabels the hour on every row and the weekday on ~7%.
 """
 
+from functools import lru_cache
+
+import holidays
 import numpy as np
 import pandas as pd
 
@@ -66,8 +69,7 @@ LAGS = [24, 48, 72, 168, 336]
 SYNTHETIC_TEMP_ERROR_C = 1.0
 
 # German national public holidays 2015-2020, as LOCAL dates. Load drops hard on
-# these and the weekday features can't see them. Regional holidays are missing
-# and that's the model's worst failure - see the README.
+# these and the weekday features can't see them.
 HOLIDAYS = {
     "2015-01-01", "2015-04-03", "2015-04-06", "2015-05-01", "2015-05-14",
     "2015-05-25", "2015-10-03", "2015-12-25", "2015-12-26",
@@ -81,6 +83,16 @@ HOLIDAYS = {
     "2019-06-10", "2019-10-03", "2019-12-25", "2019-12-26",
     "2020-01-01", "2020-04-10", "2020-04-13", "2020-05-01", "2020-05-21",
     "2020-06-01", "2020-10-03", "2020-12-25", "2020-12-26",
+}
+
+# Population by state in millions (2020). Corpus Christi, All Saints' Day,
+# Epiphany and the rest are holidays in some states only, and the national list
+# above treats them as working days. That was the model's worst failure, so
+# each date gets the share of the population that has the day off.
+STATE_POPULATION = {
+    "BW": 11.10, "BY": 13.14, "BE": 3.66, "BB": 2.53, "HB": 0.68, "HH": 1.85,
+    "HE": 6.29, "MV": 1.61, "NI": 8.00, "NW": 17.93, "RP": 4.10, "SL": 0.98,
+    "SN": 4.06, "ST": 2.18, "SH": 2.91, "TH": 2.12,
 }
 
 WEATHER_MODES = ("none", "lagged", "noisy", "perfect")
@@ -128,6 +140,25 @@ def newest_usable(index, issue="10am"):
     return last_known(index)
 
 
+@lru_cache(maxsize=None)
+def _state_calendars(years):
+    return {s: holidays.Germany(subdiv=s, years=years) for s in STATE_POPULATION}
+
+
+def holiday_share(dates):
+    """Share of Germany's population on a public holiday, per local date.
+
+    1.0 on national holidays, 0.64 on Corpus Christi, 0.32 on Epiphany.
+    `dates` is a naive DatetimeIndex of local dates.
+    """
+    cal = _state_calendars(tuple(sorted(set(dates.year))))
+    total = sum(STATE_POPULATION.values())
+    days = dates.unique()
+    share = {d: sum(p for s, p in STATE_POPULATION.items() if d in cal[s]) / total
+             for d in days}
+    return pd.Series(share).reindex(dates).to_numpy()
+
+
 def usable_temperature(temp, weather_mode, seed=0, issue="10am"):
     """The temperature the model is allowed to use for the target hour.
 
@@ -152,7 +183,8 @@ def usable_temperature(temp, weather_mode, seed=0, issue="10am"):
     return temp + noise
 
 
-def build_features(load, temp=None, weather_mode="none", seed=0, issue="10am"):
+def build_features(load, temp=None, weather_mode="none", seed=0, issue="10am",
+                   regional_holidays=True):
     if issue not in ISSUES:
         raise ValueError(f"issue must be one of {ISSUES}")
 
@@ -165,6 +197,16 @@ def build_features(load, temp=None, weather_mode="none", seed=0, issue="10am"):
     df["month"] = loc.month
     df["is_weekend"] = (loc.dayofweek >= 5).astype(int)
     df["is_holiday"] = loc.strftime("%Y-%m-%d").isin(HOLIDAYS).astype(int)
+
+    if regional_holidays:
+        day = loc.normalize().tz_localize(None)
+        df["holiday_share"] = holiday_share(day)
+        # The lags below land on these days. A holiday yesterday or a week ago
+        # drags the lag down, and the model should know why.
+        for back in (1, 2, 7):
+            df[f"holiday_share_d{back}"] = holiday_share(day - pd.Timedelta(days=back))
+        # 24-31 December: mostly not holidays, but plenty of people are off
+        df["christmas_week"] = ((loc.month == 12) & (loc.day >= 24)).astype(int)
 
     df["hour_sin"], df["hour_cos"] = _cyclical(loc.hour.to_numpy(), 24)
     df["dow_sin"], df["dow_cos"] = _cyclical(loc.dayofweek.to_numpy(), 7)
