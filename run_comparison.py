@@ -3,12 +3,13 @@ Run ridge, gradient boosting and the MLP on identical ground, against the
 seasonal-naive baseline and a published ENTSO-E-derived day-ahead benchmark.
 
     pip install -r requirements.txt
-    python run_comparison.py                        # no weather, the old model
-    python run_comparison.py --weather lagged       # yesterday's temperature only
+    python run_comparison.py                        # forecast at 10:00 on D-1, no weather
+    python run_comparison.py --weather lagged       # temperature measured by 10:00 only
     python run_comparison.py --weather noisy        # + synthetic temperature error (sensitivity)
     python run_comparison.py --weather perfect      # perfect prognosis upper bound
     python run_comparison.py --weather noisy --backtest
     python run_comparison.py --weather noisy --seed 7   # a different noise draw
+    python run_comparison.py --issue midnight       # the original midnight setup
     python selfcheck.py                             # checks, no download
 
 Identical ground means the features and the split come from src/features.py, so
@@ -28,9 +29,9 @@ import pandas as pd
 
 from src.data import load_frame, load_temperature
 from src.evaluate import (backtest_folds, backtest_run, backtest_summary,
-                          baseline_preds, mae, mae_by_target_hour, score_table,
-                          skill, worst_days)
-from src.features import build_features, chronological_split
+                          baseline_preds, bias, mae, mae_by_target_hour,
+                          score_table, skill, worst_days)
+from src.features import ISSUES, build_features, chronological_split
 from src.models import ALL_MODELS
 
 RESULTS = "results"
@@ -42,6 +43,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--weather", default="none",
                    choices=["none", "lagged", "noisy", "perfect"])
+    p.add_argument("--issue", default="10am", choices=ISSUES,
+                   help="when the forecast for day D is made: 10:00 on D-1 "
+                        "(same time as the TSO forecast) or midnight")
     p.add_argument("--val-start", default="2018-01-01")
     p.add_argument("--test-start", default="2019-01-01")
     p.add_argument("--backtest", action="store_true",
@@ -59,6 +63,8 @@ def main():
     frame = load_frame()
     load = frame["load_mw"]
     print(f"{len(load):,} hours, {load.index[0]:%Y-%m-%d} to {load.index[-1]:%Y-%m-%d}")
+    when = "10:00 on D-1" if args.issue == "10am" else "midnight"
+    print(f"forecast issued at {when}")
 
     temp = None
     if args.weather != "none":
@@ -67,7 +73,8 @@ def main():
               f"mean {temp.mean():.1f} C   (mode: {args.weather})")
     print()
 
-    X, y = build_features(load, temp, weather_mode=args.weather, seed=args.seed)
+    X, y = build_features(load, temp, weather_mode=args.weather, seed=args.seed,
+                          issue=args.issue)
     print(f"{X.shape[1]} features, {len(X):,} usable rows (first 3 weeks go to lags)\n")
 
     (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(
@@ -79,7 +86,7 @@ def main():
     Xfit, yfit = pd.concat([Xtr, Xva]), pd.concat([ytr, yva])
 
     print("Tuning on validation (test untouched):")
-    preds, chosen = baseline_preds(frame, yte.index), []
+    preds, chosen = baseline_preds(frame, yte.index, issue=args.issue), []
     for fit in ALL_MODELS:
         fn, info = fit(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True)
         preds[info["name"]] = fn(Xte)
@@ -98,11 +105,14 @@ def main():
         off, bm = mae(yte, preds["entsoe_benchmark"]), mae(yte, preds[best])
         print(f"vs the published ENTSO-E-derived benchmark: {bm:,.0f} vs "
               f"{off:,.0f} MW MAE")
-        print("  NOT a like-for-like comparison. The benchmark is published at "
-              "least two hours\n  before day-ahead gate closure (~10:00 on D-1 "
-              "for Germany); this model assumes\n  midnight, so it has ~14 hours "
-              "more demand data. Lower MAE here does not mean\n  a better "
-              "forecast. See the README.")
+        if args.issue == "10am":
+            print("  Same issue time (~10:00 on D-1). The benchmark's bias is "
+                  f"{bias(yte, preds['entsoe_benchmark']):+,.0f} MW, and OPSD keeps no\n"
+                  "  forecast vintage, so some values may be later revisions.")
+        else:
+            print("  NOT like-for-like: the benchmark is out by ~10:00 on D-1 and "
+                  "this run assumes\n  midnight, so it has ~14 hours more demand "
+                  "data. Run without --issue midnight.")
 
     gbm_mae, mlp_mae = mae(yte, preds["gbm"]), mae(yte, preds["mlp"])
     gap = abs(gbm_mae - mlp_mae)
@@ -129,8 +139,7 @@ def main():
         print(wide.round(0).to_string())
         print("\nAcross folds:")
         print(summary.round(1).to_string())
-        tidy.insert(0, "weather", args.weather)
-        tidy.to_csv(os.path.join(RESULTS, "backtest.csv"), index=False)
+        save_backtest(tidy, args)
 
     if not args.no_plots:
         made = all_plots(yte, preds, temp)
@@ -140,6 +149,22 @@ def main():
     pd.DataFrame(preds).assign(actual=yte).to_csv(
         os.path.join(RESULTS, "predictions.csv"))
     print("Wrote results/scores.csv and results/predictions.csv")
+
+
+def save_backtest(tidy, args):
+    """Write the folds to results/backtest.csv, replacing only the rows for this
+    setup, so the none and noisy runs sit side by side instead of the second
+    one overwriting the first."""
+    path = os.path.join(RESULTS, "backtest.csv")
+    tidy = tidy.copy()
+    for col in ("issue", "weather"):
+        tidy.insert(0, col, getattr(args, col))
+    if os.path.exists(path):
+        old = pd.read_csv(path)
+        if {"weather", "issue"} <= set(old.columns):
+            same = (old["weather"] == args.weather) & (old["issue"] == args.issue)
+            tidy = pd.concat([old[~same], tidy], ignore_index=True)
+    tidy.to_csv(path, index=False)
 
 
 # --------------------------------------------------------------------------

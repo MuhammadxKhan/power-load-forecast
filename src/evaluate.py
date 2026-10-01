@@ -12,8 +12,8 @@ the published benchmark tells you whether the answer is in the right ballpark.
 Be careful how that benchmark is described. It is OPSD's aggregation, not a raw
 untouched TSO series, and the file keeps target timestamps but no forecast
 vintage - so there is no way to know whether a value is the first issuance or a
-later revision. Its information cutoff is earlier than this model's assumed
-midnight either way, so beating it is not a like-for-like win.
+later revision. It is published around 10:00 on D-1, the same time as this
+model's default issue time; against the midnight setup it is not like-for-like.
 """
 
 import numpy as np
@@ -40,21 +40,28 @@ def yesterday(load):
     return load.shift(24)
 
 
+def two_days_ago(load):
+    """Same hour two days back. "Yesterday" is not out yet at 10:00 on D-1 for
+    most hours of the day, so this is the 10:00 version of that baseline."""
+    return load.shift(48)
+
+
 def mean_last_4_weeks(load):
     return sum(load.shift(168 * (w + 1)) for w in range(4)) / 4
 
 
-def baseline_preds(frame, index):
+def baseline_preds(frame, index, issue="10am"):
     """The shift-based baselines plus the official forecast, cut to the scored rows.
 
     `frame` is what data.load_frame returns: load_mw and benchmark_mw.
     """
     load = frame["load_mw"]
-    out = {
-        "yesterday": yesterday(load).reindex(index),
-        "seasonal_naive": seasonal_naive(load).reindex(index),
-        "mean_last_4_weeks": mean_last_4_weeks(load).reindex(index),
-    }
+    out = {"seasonal_naive": seasonal_naive(load).reindex(index),
+           "mean_last_4_weeks": mean_last_4_weeks(load).reindex(index)}
+    if issue == "midnight":
+        out["yesterday"] = yesterday(load).reindex(index)
+    else:
+        out["two_days_ago"] = two_days_ago(load).reindex(index)
     if "benchmark_mw" in frame:
         bench = frame["benchmark_mw"].reindex(index)
         gaps = int(bench.isna().sum())
@@ -129,11 +136,10 @@ def mae_by_target_hour(y, preds):
     """Error against the target's local clock hour.
 
     NOT lead-time verification, though an earlier version claimed it was. With
-    one midnight origin, clock hour and horizon are the same variable, so "the
-    forecast decays with horizon" and "afternoon load is harder" are
+    one issue time per day, clock hour and horizon are the same variable, so
+    "the forecast decays with horizon" and "afternoon load is harder" are
     indistinguishable. Real lead-time verification needs the same valid time
-    from several issue times. Doubly wrong for entsoe_benchmark, whose issue
-    time is not midnight. What it does show is which hours are hard.
+    from several issue times. What it does show is which hours are hard.
     """
     lead = pd.Index(y.index.tz_convert(TZ).hour, name="local_hour")
     return pd.DataFrame({n: pd.Series((pr - y).abs().to_numpy()).groupby(lead).mean()

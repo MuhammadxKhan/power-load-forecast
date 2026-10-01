@@ -9,11 +9,13 @@ Two columns come out of the OPSD file:
                 timestamps are kept but no forecast vintage, so a value may be
                 a later revision. Under Regulation 543/2013 first publication
                 is due at least two hours before gate closure (~10:00 on D-1
-                for Germany), so its information cutoff is earlier than this
-                model's assumed midnight and beating it is not like-for-like.
+                for Germany), which is why the model's default issue time is
+                10:00 on D-1 too.
 
 Temperature is ERA5, ECMWF's reanalysis: their best after-the-fact estimate of
-what the weather was. ~31 km native resolution on a 0.25 degree grid, hourly.
+what the weather was, put together days later. Nobody had it at 10:00 on D-1,
+so it stands in for a forecast here rather than being one. ~31 km native
+resolution on a 0.25 degree grid, hourly.
 
 Germany only. An earlier --country flag applied German holidays to whatever you
 asked for and used a column name OPSD does not have, so it never worked. Adding

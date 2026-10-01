@@ -17,7 +17,8 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from src.data import _from_netcdf, fake_frame, fake_temperature
 from src.evaluate import (assert_same_rows, baseline_preds, mae,
                           mae_by_target_hour, predict, seasonal_naive, skill)
-from src.features import (build_features, chronological_split, degree_hours,
+from src.features import (ISSUES, build_features, chronological_split,
+                          degree_hours, newest_usable,
                           usable_temperature)
 from src.models import ALL_MODELS, fit_mlp
 
@@ -35,20 +36,40 @@ def _changed_rows(before, after):
     return common[(before.loc[common] != after.loc[common]).any(axis=1)]
 
 
-def check_no_load_leakage(load):
-    # 1) no feature may react to a load change less than 24h before it.
-    # Note the >= t: a feature that used the value AT t would be the worst leak
-    # of all, and the old version of this test let it through by only looking
-    # strictly after t.
-    Xb, _ = build_features(load)
-    poked, t = _poke(load, 3000, 50000)
-    Xa, _ = build_features(poked)
+def _leaks(build, series, amount, issue):
+    """Poke each hour of one whole day, rebuild, and return every row that
+    reacted to a value newer than it is allowed to see.
 
-    changed = _changed_rows(Xb, Xa)
-    too_soon = changed[(changed >= t) & (changed < t + pd.Timedelta("24h"))]
-    assert len(too_soon) == 0, f"LEAKAGE: features reacted within 24h at {list(too_soon)[:3]}"
-    assert (changed >= t + pd.Timedelta("24h")).any(), "lags look broken - nothing reacted"
-    print("  [ok] no feature uses load data newer than 24h")
+    Every hour, not one. With a 10:00 issue time what a row may see depends on
+    its hour, so a single poke at the wrong time of day passes a leaky feature.
+    """
+    before = build(series)
+    start = len(series) // 2
+    bad = []
+    for k in range(24):
+        poked, t = _poke(series, start + k, amount)
+        changed = _changed_rows(before, build(poked))
+        assert len(changed) > 0, "nothing reacted to the poke - features look dead"
+        bad += list(changed[newest_usable(changed, issue) < t])
+    return bad
+
+
+def check_no_load_leakage(load):
+    # 1) no feature may react to load the forecaster could not have seen yet.
+    # For 10am that means after 09:00 on D-1, for midnight anything inside 24h.
+    for issue in ISSUES:
+        bad = _leaks(lambda s: build_features(s, issue=issue)[0], load, 50000, issue)
+        assert not bad, f"LEAKAGE ({issue}): features reacted early at {bad[:3]}"
+    print("  [ok] no feature uses load published after the issue time (10am and midnight)")
+
+    # and it has to catch a real one. Same hour yesterday is fine at midnight
+    # but mostly not out yet at 10:00, so adding it back must fail.
+    def leaky(s):
+        X, _ = build_features(s)
+        X["lag_24h"] = s.shift(24).reindex(X.index)
+        return X
+    assert _leaks(leaky, load, 50000, "10am"), "the leak check missed a 24h lag at 10am"
+    print("  [ok] the leak check fails when a 24h lag is slipped into the 10am features")
 
 
 def check_local_time(load):
@@ -70,6 +91,7 @@ def check_local_time(load):
     print("  [ok] calendar features are on Europe/Berlin, not UTC")
 
 
+
 def check_feature_table(load):
     # 3) target not among the features, no NaNs, aligned
     X, y = build_features(load)
@@ -85,6 +107,12 @@ def check_baseline_and_skill(frame):
     yv = pd.Series([10.0, 20.0, 30.0]); b = pd.Series([12.0, 18.0, 33.0])
     assert abs(skill(yv, yv, b) - 1.0) < 1e-9 and abs(skill(yv, b, b)) < 1e-9
     print("  [ok] seasonal naive is a 168h shift, skill score behaves")
+
+    # at 10:00 most of yesterday is not out yet, so no baseline may use it
+    idx = load.index[1000:1100]
+    assert "yesterday" not in baseline_preds(frame, idx)
+    assert "yesterday" in baseline_preds(frame, idx, issue="midnight")
+    print("  [ok] the 10am baselines only use data out by 10:00 on D-1")
 
 
 def check_beats_naive(frame):
@@ -105,7 +133,8 @@ def check_weather_modes(load):
     This is the check that keeps the weather honest. Poke the temperature series
     and see which modes react.
 
-      lagged   must NOT react inside 24h - it only ever looks backwards
+      lagged   must NOT react to temperature measured after the issue time -
+               it only ever looks backwards
       perfect  MUST react at the poked hour, because that is the whole point of
                perfect prognosis, and if it didn't the mode would be broken
 
@@ -119,31 +148,34 @@ def check_weather_modes(load):
 
     assert usable_temperature(temp, "none") is None
     assert usable_temperature(temp, "perfect").equals(temp)
-    assert usable_temperature(temp, "lagged").equals(temp.shift(24))
+    assert usable_temperature(temp, "lagged").equals(temp.shift(48))
+    assert usable_temperature(temp, "lagged", issue="midnight").equals(temp.shift(24))
     fc = usable_temperature(temp, "noisy", seed=0)
     assert not fc.equals(temp), "noisy mode must not be the exact truth"
     assert usable_temperature(temp, "noisy", seed=0).equals(fc), "noisy mode not seeded"
 
+    for issue in ISSUES:
+        def lagged(s, issue=issue):
+            return build_features(load, s, weather_mode="lagged", issue=issue)[0]
+        bad = _leaks(lagged, temp, 25.0, issue)
+        assert not bad, f"LEAKAGE ({issue}): lagged weather reacted early at {bad[:3]}"
+    print("  [ok] weather_mode='lagged' uses no temperature measured after the issue time")
+
     poked, t = _poke(temp, 4000, 25.0)
-
-    Xb, _ = build_features(load, temp, weather_mode="lagged")
-    Xa, _ = build_features(load, poked, weather_mode="lagged")
-    changed = _changed_rows(Xb, Xa)
-    too_soon = changed[(changed >= t) & (changed < t + pd.Timedelta("24h"))]
-    assert len(too_soon) == 0, f"LEAKAGE: lagged weather reacted within 24h at {list(too_soon)[:3]}"
-    assert len(changed) > 0, "lagged weather never reacted at all - features look dead"
-    print("  [ok] weather_mode='lagged' uses no temperature newer than 24h")
-
-    Xb, _ = build_features(load, temp, weather_mode="perfect")
-    Xa, _ = build_features(load, poked, weather_mode="perfect")
-    changed = _changed_rows(Xb, Xa)
-    assert t in changed, "perfect mode should react at the poked hour - it isn't perfect prog"
+    for issue in ISSUES:
+        Xb, _ = build_features(load, temp, weather_mode="perfect", issue=issue)
+        Xa, _ = build_features(load, poked, weather_mode="perfect", issue=issue)
+        assert t in _changed_rows(Xb, Xa), \
+            "perfect mode should react at the poked hour - it isn't perfect prog"
     print("  [ok] weather_mode='perfect' does use target-hour temperature, as documented")
 
-    n_none = build_features(load, temp, weather_mode="none")[0].shape[1]
-    n_wx = build_features(load, temp, weather_mode="lagged")[0].shape[1]
-    assert n_wx == n_none + 5, f"expected 5 weather features, got {n_wx - n_none}"
-    print(f"  [ok] weather adds exactly 5 features ({n_none} -> {n_wx})")
+    for issue in ISSUES:
+        n_none = build_features(load, temp, weather_mode="none", issue=issue)[0].shape[1]
+        for mode in ("lagged", "noisy", "perfect"):
+            n_wx = build_features(load, temp, weather_mode=mode, issue=issue)[0].shape[1]
+            assert n_wx == n_none + 5, \
+                f"{mode}/{issue}: expected 5 weather features, got {n_wx - n_none}"
+    print(f"  [ok] weather adds exactly 5 features in every mode ({n_none} -> {n_wx})")
 
 
 def check_netcdf_reader():

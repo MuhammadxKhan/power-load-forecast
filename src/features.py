@@ -6,16 +6,23 @@ than the one it is compared against.
 
 Two rules.
 
-1. Load. We forecast day D at midnight, so the newest demand figure is 23:00 on
-   D-1. No feature touches the load series at a lag under 24 hours.
-   selfcheck.py pokes the series and checks nothing reacts too soon.
+1. Load. The forecast for day D is made at 10:00 on D-1, which is when the TSOs
+   publish theirs (two hours before the day-ahead auction closes at 12:00).
+   ENTSO-E publishes actual load up to an hour after the hour ends, so the
+   newest hour the model may see is the one starting 08:00 on D-1. Every load
+   feature for day D is built from data up to that hour and nothing later.
+
+   issue="midnight" is the original setup: forecast at midnight, every load
+   lag at least 24 hours. It is too late for the day-ahead auction and gives
+   the model about fourteen hours more data than the TSO forecast had, so it is
+   kept for comparison only. selfcheck.py checks both.
 
 2. Weather. You genuinely do have a forecast for tomorrow, so target-hour
    temperature is not automatically cheating; using ERA5 reanalysis and calling
    it a forecast is. weather_mode makes the choice explicit:
 
      "none"     no weather at all
-     "lagged"   temperature from 24h+ ago only
+     "lagged"   only temperature already measured at the forecast time
      "noisy"    target-hour temperature plus synthetic error - a sensitivity
                 test, not a forecast
      "perfect"  target-hour temperature exactly - an upper bound, not a
@@ -32,8 +39,17 @@ getting this wrong mislabels the hour on every row and the weekday on ~7%.
 import numpy as np
 import pandas as pd
 
-LAGS = [24, 48, 72, 168, 336]
 TZ = "Europe/Berlin"
+ISSUES = ("10am", "midnight")
+
+# 10:00 issue: same-hour lags that are always published by 10:00 on D-1, plus
+# a snapshot of the latest data (see last_known).
+ISSUE_LAGS = [48, 72, 168, 336]
+ISSUE_HOUR = 10
+LAST_KNOWN_HOUR = ISSUE_HOUR - 2   # the 08:00-09:00 value is out by 10:00
+
+# midnight issue: the original lags
+LAGS = [24, 48, 72, 168, 336]
 
 # Size of the synthetic error injected by weather_mode="noisy", degrees C.
 #
@@ -96,7 +112,23 @@ def _cyclical(values, period):
     return np.sin(r), np.cos(r)
 
 
-def usable_temperature(temp, weather_mode, seed=0):
+def last_known(index):
+    """For each target hour, the start of the newest load hour that is out by
+    10:00 local on the day before. All 24 hours of day D share one value."""
+    day = index.tz_convert(TZ).normalize().tz_localize(None)
+    lk = day - pd.Timedelta(days=1) + pd.Timedelta(hours=LAST_KNOWN_HOUR)
+    return lk.tz_localize(TZ).tz_convert("UTC")
+
+
+def newest_usable(index, issue="10am"):
+    """The newest load timestamp each row is allowed to depend on. selfcheck.py
+    pokes the series and checks nothing reacts to a value later than this."""
+    if issue == "midnight":
+        return index - pd.Timedelta(hours=24)
+    return last_known(index)
+
+
+def usable_temperature(temp, weather_mode, seed=0, issue="10am"):
     """The temperature the model is allowed to use for the target hour.
 
     Split out from build_features so selfcheck.py can test it on its own.
@@ -109,7 +141,8 @@ def usable_temperature(temp, weather_mode, seed=0):
         raise ValueError(f"weather_mode={weather_mode!r} needs a temperature series")
 
     if weather_mode == "lagged":
-        return temp.shift(24)
+        # same hour on the most recent day that has been measured by then
+        return temp.shift(24 if issue == "midnight" else 48)
     if weather_mode == "perfect":
         return temp
     # "noisy": truth plus synthetic error. One random realisation, seeded, so
@@ -119,7 +152,10 @@ def usable_temperature(temp, weather_mode, seed=0):
     return temp + noise
 
 
-def build_features(load, temp=None, weather_mode="none", seed=0):
+def build_features(load, temp=None, weather_mode="none", seed=0, issue="10am"):
+    if issue not in ISSUES:
+        raise ValueError(f"issue must be one of {ISSUES}")
+
     df = pd.DataFrame({"load_mw": load})
     idx = df.index
     loc = idx.tz_convert(TZ)   # German clocks, not UTC
@@ -134,28 +170,46 @@ def build_features(load, temp=None, weather_mode="none", seed=0):
     df["dow_sin"], df["dow_cos"] = _cyclical(loc.dayofweek.to_numpy(), 7)
     df["doy_sin"], df["doy_cos"] = _cyclical(loc.dayofyear.to_numpy(), 365)
 
-    for lag in LAGS:
-        df[f"lag_{lag}h"] = df["load_mw"].shift(lag)
-
-    past = df["load_mw"].shift(24)  # everything rolls off the 24h-lagged series
-    df["roll_mean_24h"] = past.rolling(24).mean()
-    df["roll_mean_168h"] = past.rolling(168).mean()
-    df["roll_std_24h"] = past.rolling(24).std()
+    if issue == "midnight":
+        for lag in LAGS:
+            df[f"lag_{lag}h"] = df["load_mw"].shift(lag)
+        past = df["load_mw"].shift(24)  # everything rolls off the 24h-lagged series
+        df["roll_mean_24h"] = past.rolling(24).mean()
+        df["roll_mean_168h"] = past.rolling(168).mean()
+        df["roll_std_24h"] = past.rolling(24).std()
+    else:
+        for lag in ISSUE_LAGS:
+            df[f"lag_{lag}h"] = df["load_mw"].shift(lag)
+        # one snapshot of what is known at 10:00 on D-1, shared by all 24
+        # hours of D - the way a forecast run actually works
+        lk = last_known(idx)
+        df["last_known"] = df["load_mw"].reindex(lk).to_numpy()
+        df["roll_mean_24h"] = df["load_mw"].rolling(24).mean().reindex(lk).to_numpy()
+        df["roll_mean_168h"] = df["load_mw"].rolling(168).mean().reindex(lk).to_numpy()
+        df["roll_std_24h"] = df["load_mw"].rolling(24).std().reindex(lk).to_numpy()
 
     df["same_hour_3wk_mean"] = (
         df["load_mw"].shift(168) + df["load_mw"].shift(336) + df["load_mw"].shift(504)
     ) / 3
 
-    t = usable_temperature(temp, weather_mode, seed)
+    t = usable_temperature(temp, weather_mode, seed, issue)
     if t is not None:
         t = t.reindex(idx)
         df["temp_c"] = t
         df["hdh"], df["cdh"] = degree_hours(t)
-        # buildings have thermal inertia - today's demand responds to the last
-        # day of weather, not just this instant
-        df["temp_roll_mean_24h"] = t.rolling(24).mean()
-        # warming or cooling relative to the same hour yesterday
-        df["temp_change_24h"] = t - t.shift(24)
+        if weather_mode == "lagged" and issue == "10am":
+            # t.shift(24) would reach past 10:00 for most hours, so anchor on
+            # the last measured hour instead
+            measured = temp.reindex(idx)
+            lk = last_known(idx)
+            df["temp_roll_mean_24h"] = measured.rolling(24).mean().reindex(lk).to_numpy()
+            df["temp_last_known"] = measured.reindex(lk).to_numpy()
+        else:
+            # buildings have thermal inertia - today's demand responds to the
+            # last day of weather, not just this instant
+            df["temp_roll_mean_24h"] = t.rolling(24).mean()
+            # warming or cooling relative to the same hour yesterday
+            df["temp_change_24h"] = t - t.shift(24)
 
     df = df.dropna()
     y = df.pop("load_mw")
