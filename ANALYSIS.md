@@ -319,6 +319,8 @@ committed `scores.csv` and `predictions.csv` byte for byte.
   Saxony and Thuringia, and Assumption Day in parts of Bavaria; neither is
   counted. School holidays aren't modelled.
 - **No wind or solar.**
+- **The data stops in September 2020**, the last OPSD release. Newer data
+  (ENTSO-E, SMARD) would cover the 2022 energy crisis, when demand fell.
 - **The test period contains the spring 2020 lockdown.**
 - **Day-of-year is on a 365-day cycle**, so leap years drift by a day in the
   seasonal terms. Small, but wrong.
