@@ -30,8 +30,8 @@ import pandas as pd
 
 from src.data import load_frame, load_temperature
 from src.evaluate import (backtest_folds, backtest_run, backtest_summary,
-                          baseline_preds, bias, mae, mae_by_target_hour,
-                          score_table, skill, worst_days)
+                          baseline_preds, bias, diebold_mariano, mae,
+                          mae_by_target_hour, score_table, skill, worst_days)
 from src.features import ISSUES, build_features, chronological_split
 from src.models import ALL_MODELS
 
@@ -108,6 +108,8 @@ def main():
         off, bm = mae(yte, preds["entsoe_benchmark"]), mae(yte, preds[best])
         print(f"vs the published ENTSO-E-derived benchmark: {bm:,.0f} vs "
               f"{off:,.0f} MW MAE")
+        dm, p = diebold_mariano(yte, preds[best], preds["entsoe_benchmark"])
+        print(f"  Diebold-Mariano on daily errors: stat {dm:+.2f}, p = {p:.2g}")
         if args.issue == "10am":
             print("  Same issue time (~10:00 on D-1). The benchmark's bias is "
                   f"{bias(yte, preds['entsoe_benchmark']):+,.0f} MW, and OPSD keeps no\n"
@@ -121,6 +123,8 @@ def main():
     gap = abs(gbm_mae - mlp_mae)
     print(f"\nGBM vs MLP: {gbm_mae:,.0f} vs {mlp_mae:,.0f} MW "
           f"({gap / min(gbm_mae, mlp_mae):.1%} apart)")
+    dm, p = diebold_mariano(yte, preds["gbm"], preds["mlp"])
+    print(f"  Diebold-Mariano on daily errors: stat {dm:+.2f}, p = {p:.2g}")
     if gap / min(gbm_mae, mlp_mae) < 0.02:
         print("  Under 2% on one test window - treat that as a tie, not a winner."
               "\n  Run with --backtest to see whether the ordering is even stable.")

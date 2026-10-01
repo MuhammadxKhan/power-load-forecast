@@ -15,7 +15,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 from src.data import _from_netcdf, fake_frame, fake_temperature
-from src.evaluate import (assert_same_rows, baseline_preds, mae,
+from src.evaluate import (assert_same_rows, baseline_preds, diebold_mariano, mae,
                           mae_by_target_hour, predict, seasonal_naive, skill)
 from src.features import (ISSUES, build_features, chronological_split,
                           degree_hours, holiday_share, newest_usable,
@@ -118,6 +118,16 @@ def check_baseline_and_skill(frame):
     assert "yesterday" not in baseline_preds(frame, idx)
     assert "yesterday" in baseline_preds(frame, idx, issue="midnight")
     print("  [ok] the 10am baselines only use data out by 10:00 on D-1")
+
+    # Diebold-Mariano: a forecast with a third of the error has to win clearly,
+    # and swapping the two has to flip the sign and nothing else
+    y = load.iloc[:24 * 120]
+    rng = np.random.default_rng(0)
+    good, poor = y + rng.normal(0, 500, len(y)), y + rng.normal(0, 1500, len(y))
+    stat, p = diebold_mariano(y, good, poor)
+    assert stat < 0 and p < 0.01, f"DM missed a clearly better forecast: {stat:.2f}, p={p:.3f}"
+    assert abs(stat + diebold_mariano(y, poor, good)[0]) < 1e-9, "DM is not antisymmetric"
+    print("  [ok] Diebold-Mariano picks the better forecast and is antisymmetric")
 
 
 def check_beats_naive(frame):

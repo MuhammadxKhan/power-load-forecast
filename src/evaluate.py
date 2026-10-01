@@ -16,6 +16,8 @@ later revision. It is published around 10:00 on D-1, the same time as this
 model's default issue time; against the midnight setup it is not like-for-like.
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -104,6 +106,27 @@ def skill(y, pred, base):
 
 def predict(model, X):
     return pd.Series(model.predict(X), index=X.index)
+
+
+def diebold_mariano(y, a, b, lags=7):
+    """Is forecast a's absolute error really different from b's, or is the gap
+    something one test window could produce by chance?
+
+    Works on the daily mean of the hourly loss difference. Hours inside a day
+    are strongly correlated, so treating them as 24 separate observations would
+    overstate the evidence; days are much less so, and the Newey-West variance
+    with a week of lags covers what is left. Negative stat means a is better.
+    Returns (stat, two-sided p-value) from the normal approximation.
+    """
+    loss = (a - y).abs() - (b - y).abs()
+    daily = loss.groupby(y.index.tz_convert(TZ).date).mean().to_numpy()
+    n = len(daily)
+    d = daily - daily.mean()
+    var = d @ d / n
+    for k in range(1, lags + 1):
+        var += 2 * (1 - k / (lags + 1)) * (d[k:] @ d[:-k]) / n
+    stat = daily.mean() / np.sqrt(var / n)
+    return float(stat), float(math.erfc(abs(stat) / math.sqrt(2)))
 
 
 # --------------------------------------------------------------------------
