@@ -1,23 +1,20 @@
 """
-The three models. Same features, same split, same protocol, same interface.
-
-Each one exposes exactly:
+The three models, all with the same interface:
 
     fit_ridge / fit_gbm / fit_mlp
         (Xtr, ytr, Xva, yva, Xfit, yfit, verbose) -> (predict_fn, info)
 
-Each runs a four-configuration grid on the validation fold, refits once on
-train+val, and returns something that predicts. One file, so the identical
-signatures are checkable at a glance.
+Each tries four settings on the validation year, refits the best one on
+train+val, and returns a predict function. None of them is passed the test set.
 
-None is ever handed the test set, so none can touch it - structural, not a
-promise. Ridge and the MLP both standardise inputs on whatever fold they are
-fitted on.
-
-The MLP is deliberately plain: dense, ReLU, Adam, early stopping, fixed seed.
-Its loss is MSE because HistGradientBoostingRegressor minimises squared error;
-different losses would make any gap between them a fact about the loss rather
-than the model.
+- ridge: the linear reference. Regularised because the lag features are highly
+  correlated with each other.
+- gradient boosting (HistGradientBoostingRegressor): picks up interactions such
+  as hour x weekday x holiday without hand-made features, needs no scaling, and
+  is fast on ~35k rows.
+- MLP: a plain feed-forward network as a smooth non-linear alternative. Trained
+  on MSE, the same loss the booster uses, so a gap between them is about the
+  model rather than the loss.
 """
 
 import numpy as np
@@ -58,13 +55,10 @@ def fit_ridge(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
 # --------------------------------------------------------------------------
 # gradient boosting
 #
-# early_stopping is forced off. The default is "auto", which switches itself ON
-# above 10,000 rows and carves an internal 10% validation slice out of whatever
-# you hand it. With 25,800 training rows that was silently active, so max_iter
-# =600 was really running about 95 iterations and the [300, 600] grid was tuning
-# a number the model ignored. Off means max_iter means max_iter, and the
-# external validation fold is the only one - which is what the README claimed
-# all along.
+# early_stopping is off. sklearn's default ("auto") turns it on above 10,000
+# rows and holds back 10% of the training data internally, which meant max_iter
+# was being ignored and the grid below wasn't tuning anything. With it off, the
+# validation year is the only validation set.
 # --------------------------------------------------------------------------
 GBM_LEARNING_RATES = [0.05, 0.1]
 MAX_ITERS = [300, 600]
@@ -92,7 +86,7 @@ def fit_gbm(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
     return (lambda X: predict(model, X)), info
 
 # --------------------------------------------------------------------------
-# the MLP
+# MLP
 # --------------------------------------------------------------------------
 HIDDEN_SIZES = [(64, 64), (256, 128)]
 MLP_LEARNING_RATES = [1e-3, 3e-3]
@@ -102,6 +96,7 @@ PATIENCE = 10
 
 
 class _Scaler:
+    # standardise inputs and target; networks train badly on raw MW values
     def fit(self, a):
         self.mu = a.mean(axis=0)
         self.sd = a.std(axis=0)
@@ -134,12 +129,11 @@ def _predict(net, xs, ys, X):
 
 
 def _train(Xa, ya, hidden, lr, epochs, Xva=None, yva=None, seed=SEED):
-    """Fit on (Xa, ya). Both scalers see that fold and nothing else.
+    """Fit on (Xa, ya), with scalers fitted on that data only.
 
-    With a validation fold, stop early and report the winning epoch - that count
-    is a hyperparameter like any other. Without one, train for exactly `epochs`,
-    which is how the refit reuses the tuned number. Same shape as the GBM's
-    max_iter: chosen on validation, then held fixed for the refit.
+    With a validation set, stop early and return the best epoch. Without one,
+    train for exactly `epochs`; that is how the refit reuses the tuned number,
+    the same way the booster reuses max_iter.
     """
     xa = Xa.to_numpy(dtype=np.float64)
     yv = ya.to_numpy(dtype=np.float64).reshape(-1, 1)
@@ -153,7 +147,7 @@ def _train(Xa, ya, hidden, lr, epochs, Xva=None, yva=None, seed=SEED):
     net = _make_net(xt.shape[1], hidden, seed)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
-    g = torch.Generator().manual_seed(seed)  # fixed batch order
+    g = torch.Generator().manual_seed(seed)  # fixed batch order, so runs repeat exactly
 
     best_state, best_val, best_epoch, stale = None, float("inf"), epochs, 0
     n = xt.shape[0]
@@ -170,8 +164,7 @@ def _train(Xa, ya, hidden, lr, epochs, Xva=None, yva=None, seed=SEED):
         if Xva is None:
             continue
 
-        # early stopping watches val MAE because val MAE picks the winner for
-        # the other two models as well. Training still minimises MSE.
+        # stop on validation MAE, the same metric that picks the other models
         v = mae(yva, _predict(net, xs, ys, Xva))
         if v < best_val:
             best_val, best_epoch, stale = v, ep, 0
@@ -206,7 +199,7 @@ def fit_mlp(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
                    "batch": BATCH, "seed": SEED},
         "val_mae": best_score,
         "loss": "mse",
-        # exported so selfcheck.py can verify the scalers only saw the fit fold
+        # returned so selfcheck.py can check the scalers only saw the fit data
         "scaler_x_mean": xs.mu.copy(),
         "scaler_y_mean": float(ys.mu[0]),
         "scaler_y_std": float(ys.sd[0]),
@@ -215,7 +208,5 @@ def fit_mlp(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=True):
     return (lambda X: _predict(net, xs, ys, X)), info
 
 
-# every model in the comparison, in table order. run_comparison.py and
-# selfcheck.py both iterate this, so adding a fourth model means adding it here
-# and nowhere else.
+# every model in the comparison; run_comparison.py and selfcheck.py loop over this
 ALL_MODELS = [fit_ridge, fit_gbm, fit_mlp]

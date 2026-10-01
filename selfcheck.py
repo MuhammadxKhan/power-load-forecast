@@ -1,13 +1,12 @@
 """
-Self-checks on synthetic data. No download, no network.
+Self-checks on synthetic data, no download or network needed.
 
     python selfcheck.py
 
-The numbers these print are meaningless - the data is fake. What matters is
-that the assertions hold: nothing reaches forward in time, the calendar features
-are on German clocks, weather behaves the way the chosen mode says it does, the
-MLP's scalers never see the test period, and every model is scored on the same
-rows.
+The printed numbers mean nothing (the data is fake); the assertions are the
+point: no feature sees data from after the issue time, calendar features are on
+German time, the weather modes behave as described, the MLP never sees the test
+period, and every model is scored on the same rows.
 """
 
 import numpy as np
@@ -37,33 +36,30 @@ def _changed_rows(before, after):
 
 
 def _leaks(build, series, amount, issue):
-    """Poke each hour of one whole day, rebuild, and return every row that
-    reacted to a value newer than it is allowed to see.
+    """Spike each hour of one day in turn, rebuild the features, and return the
+    rows that changed even though the spike was newer than they may see.
 
-    Every hour, not one. With a 10:00 issue time what a row may see depends on
-    its hour, so a single poke at the wrong time of day passes a leaky feature.
-    """
+    All 24 hours, because at 10:00 what a row may see depends on its hour."""
     before = build(series)
     start = len(series) // 2
     bad = []
     for k in range(24):
         poked, t = _poke(series, start + k, amount)
         changed = _changed_rows(before, build(poked))
-        assert len(changed) > 0, "nothing reacted to the poke - features look dead"
+        assert len(changed) > 0, "nothing reacted to the poke"
         bad += list(changed[newest_usable(changed, issue) < t])
     return bad
 
 
 def check_no_load_leakage(load):
-    # 1) no feature may react to load the forecaster could not have seen yet.
-    # For 10am that means after 09:00 on D-1, for midnight anything inside 24h.
+    # 10am: nothing after 09:00 on D-1; midnight: nothing within 24 hours
     for issue in ISSUES:
         bad = _leaks(lambda s: build_features(s, issue=issue)[0], load, 50000, issue)
-        assert not bad, f"LEAKAGE ({issue}): features reacted early at {bad[:3]}"
+        assert not bad, f"leakage ({issue}): features reacted early at {bad[:3]}"
     print("  [ok] no feature uses load published after the issue time (10am and midnight)")
 
-    # and it has to catch a real one. Same hour yesterday is fine at midnight
-    # but mostly not out yet at 10:00, so adding it back must fail.
+    # the check must also catch a real leak: same hour yesterday is fine at
+    # midnight but mostly not published by 10:00
     def leaky(s):
         X, _ = build_features(s)
         X["lag_24h"] = s.shift(24).reindex(X.index)
@@ -73,32 +69,29 @@ def check_no_load_leakage(load):
 
 
 def check_local_time(load):
-    # 2) calendar features follow German clocks, not UTC.
-    # 23:00 UTC on 31 Dec is already New Year's Day in Germany.
+    # 23:00 UTC on 31 Dec is already New Year's Day in Germany
     X, _ = build_features(load)
     loc = X.index.tz_convert("Europe/Berlin")
 
     assert (X["hour"].to_numpy() == loc.hour.to_numpy()).all(), "hour is not local"
     assert (X["dayofweek"].to_numpy() == loc.dayofweek.to_numpy()).all(), "dow is not local"
     assert (X["hour"].to_numpy() != X.index.hour.to_numpy()).any(), \
-        "local and UTC hours are identical here, so this check proves nothing"
+        "local and UTC hours are identical in this sample"
 
     nye = pd.Timestamp("2016-12-31 23:00", tz="UTC")
     if nye in X.index:
-        assert X.loc[nye, "is_holiday"] == 1, \
-            "23:00 UTC on 31 Dec is 1 Jan in Germany and should be a holiday"
+        assert X.loc[nye, "is_holiday"] == 1, "1 Jan (local) should be a holiday"
         assert X.loc[nye, "hour"] == 0, "local hour should be 0"
     print("  [ok] calendar features are on Europe/Berlin, not UTC")
 
-    # regional holidays: Corpus Christi is a holiday for about two thirds of
-    # the country, Christmas for all of it, an ordinary Tuesday for nobody
+    # Corpus Christi ~two thirds of the country, Christmas all of it, a normal
+    # Tuesday none
     s = holiday_share(pd.DatetimeIndex(["2016-05-26", "2016-12-25", "2016-07-05"]))
     assert 0.5 < s[0] < 0.8 and s[1] == 1.0 and s[2] == 0.0, f"holiday shares look wrong: {s}"
     print("  [ok] regional holiday shares (Corpus Christi 0.64, Christmas 1, normal day 0)")
 
 
 def check_feature_table(load):
-    # 3) target not among the features, no NaNs, aligned
     X, y = build_features(load)
     assert "load_mw" not in X.columns and len(X) == len(y) and (X.index == y.index).all()
     assert not X.isna().any().any() and not y.isna().any()
@@ -106,21 +99,20 @@ def check_feature_table(load):
 
 
 def check_baseline_and_skill(frame):
-    # 4) seasonal naive is a 168h shift, and the skill score has the right signs
     load = frame["load_mw"]
     assert seasonal_naive(load).iloc[168] == load.iloc[0]
     yv = pd.Series([10.0, 20.0, 30.0]); b = pd.Series([12.0, 18.0, 33.0])
     assert abs(skill(yv, yv, b) - 1.0) < 1e-9 and abs(skill(yv, b, b)) < 1e-9
     print("  [ok] seasonal naive is a 168h shift, skill score behaves")
 
-    # at 10:00 most of yesterday is not out yet, so no baseline may use it
+    # most of yesterday isn't published at 10:00, so no 10am baseline may use it
     idx = load.index[1000:1100]
     assert "yesterday" not in baseline_preds(frame, idx)
     assert "yesterday" in baseline_preds(frame, idx, issue="midnight")
     print("  [ok] the 10am baselines only use data out by 10:00 on D-1")
 
-    # Diebold-Mariano: a forecast with a third of the error has to win clearly,
-    # and swapping the two has to flip the sign and nothing else
+    # a forecast with a third of the error should win clearly, and swapping
+    # the two should only flip the sign
     y = load.iloc[:24 * 120]
     rng = np.random.default_rng(0)
     good, poor = y + rng.normal(0, 500, len(y)), y + rng.normal(0, 1500, len(y))
@@ -131,7 +123,6 @@ def check_baseline_and_skill(frame):
 
 
 def check_beats_naive(frame):
-    # 5) a model beats naive on clean synthetic data
     load = frame["load_mw"]
     X, y = build_features(load)
     (Xtr, ytr), _, (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
@@ -143,19 +134,9 @@ def check_beats_naive(frame):
 
 
 def check_weather_modes(load):
-    """6) each weather mode does what it claims, and 'lagged' cannot leak.
-
-    This is the check that keeps the weather honest. Poke the temperature series
-    and see which modes react.
-
-      lagged   must NOT react to temperature measured after the issue time -
-               it only ever looks backwards
-      perfect  MUST react at the poked hour, because that is the whole point of
-               perfect prognosis, and if it didn't the mode would be broken
-
-    Asserting both ways round means the modes can't quietly become the same
-    thing.
-    """
+    """Spike the temperature series: 'lagged' must not react to anything
+    measured after the issue time, and 'perfect' must react at the spiked
+    hour. Checking both directions stops the modes quietly becoming the same."""
     temp = fake_temperature(load.index, seed=3)
 
     hdh, cdh = degree_hours(pd.Series([-5.0, 18.0, 30.0]))
@@ -173,15 +154,14 @@ def check_weather_modes(load):
         def lagged(s, issue=issue):
             return build_features(load, s, weather_mode="lagged", issue=issue)[0]
         bad = _leaks(lagged, temp, 25.0, issue)
-        assert not bad, f"LEAKAGE ({issue}): lagged weather reacted early at {bad[:3]}"
+        assert not bad, f"leakage ({issue}): lagged weather reacted early at {bad[:3]}"
     print("  [ok] weather_mode='lagged' uses no temperature measured after the issue time")
 
     poked, t = _poke(temp, 4000, 25.0)
     for issue in ISSUES:
         Xb, _ = build_features(load, temp, weather_mode="perfect", issue=issue)
         Xa, _ = build_features(load, poked, weather_mode="perfect", issue=issue)
-        assert t in _changed_rows(Xb, Xa), \
-            "perfect mode should react at the poked hour - it isn't perfect prog"
+        assert t in _changed_rows(Xb, Xa), "perfect mode should react at the poked hour"
     print("  [ok] weather_mode='perfect' does use target-hour temperature, as documented")
 
     for issue in ISSUES:
@@ -194,26 +174,12 @@ def check_weather_modes(load):
 
 
 def check_netcdf_reader():
-    """7) the ERA5 NetCDF reader actually reads NetCDF.
-
-    Everything else here uses fake_temperature, which is a plain pandas Series -
-    so none of it exercises xarray at all. This builds a real two-file NetCDF
-    fixture in ERA5's layout, reads it through the same _from_netcdf the real
-    pipeline uses, and deletes it. Two files specifically, because the earlier
-    version of _from_netcdf called xarray.open_mfdataset, which needs dask, and
-    dask was never a dependency - so the multi-year path (src/download_era5.py
-    writes one file per year) would have died with an ImportError the first time
-    it met real data. The single-file path worked, which is exactly why nobody
-    noticed.
-    """
+    """Write a small two-file NetCDF in ERA5's layout and read it back through
+    _from_netcdf. Two files because the download writes one per year."""
     try:
         import xarray as xr
     except ImportError:
-        raise AssertionError(
-            "xarray is a pinned dependency but isn't installed, so the NetCDF "
-            "reader is untested. Install it rather than skipping - an earlier "
-            "version printed 'skipping' and then 'All checks passed', which is "
-            "worse than failing.")
+        raise AssertionError("xarray is a pinned dependency - install it to run this check")
 
     import shutil
     import tempfile
@@ -225,8 +191,7 @@ def check_netcdf_reader():
             idx = pd.date_range(f"{yr}-01-01", periods=36, freq="h")
             lats = np.arange(55.0, 53.9, -0.25)
             lons = np.arange(5.5, 6.6, 0.25)
-            # a known field so the spatial mean is predictable: every cell in
-            # hour i holds exactly 273.15 + i + k, so the mean is i + k in C
+            # every cell in hour i holds 273.15 + i + k, so the mean is i + k in C
             base = np.arange(len(idx), dtype="float32") + k + 273.15
             data = np.repeat(np.repeat(base[:, None, None], len(lats), 1), len(lons), 2)
             f = f"{tmp}/era5_t2m_{yr}.nc"
@@ -249,13 +214,8 @@ def check_netcdf_reader():
 
 
 def check_mlp_scalers_and_determinism(load):
-    """7) the MLP's scalers only ever see the fold it is fitted on.
-
-    The fit functions are never handed the test set, so structurally they can't scale by
-    test statistics. Asserting that is weak on its own, so this does it the hard
-    way: wreck the load series inside the test period, refit everything, and
-    check the model that comes out is bit-for-bit the one from the clean run.
-    """
+    """The MLP's scalers only see the data it is fitted on. Tested by scaling
+    up the test period, refitting, and checking the model is bit-identical."""
     X, y = build_features(load)
     (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
     Xfit, yfit = pd.concat([Xtr, Xva]), pd.concat([ytr, yva])
@@ -270,27 +230,27 @@ def check_mlp_scalers_and_determinism(load):
     assert float(yfit.to_numpy().mean()) == info_a["scaler_y_mean"]
     assert not np.allclose(X.to_numpy(dtype=np.float64).mean(axis=0),
                            info_a["scaler_x_mean"]), \
-        "fit-fold and full-series stats are identical here, so this proves nothing"
+        "fit and full-series means are identical in this sample"
 
     cut = pd.Timestamp(TEST_START, tz="UTC") + pd.Timedelta("504h")
     wrecked = load.copy()
     wrecked.loc[cut:] = wrecked.loc[cut:] * 7.5
     Xw, yw = build_features(wrecked)
     (Xtr_w, ytr_w), (Xva_w, yva_w), _ = chronological_split(Xw, yw, VAL_START, TEST_START)
-    assert Xtr_w.equals(Xtr) and Xva_w.equals(Xva), "the wrecking touched the training folds"
+    assert Xtr_w.equals(Xtr) and Xva_w.equals(Xva), "the change touched the training data"
 
     fn_w, info_w = fit_mlp(
         Xtr_w, ytr_w, Xva_w, yva_w,
         pd.concat([Xtr_w, Xva_w]), pd.concat([ytr_w, yva_w]), verbose=False)
     assert np.array_equal(info_a["scaler_x_mean"], info_w["scaler_x_mean"])
     assert (pa.to_numpy() == fn_w(Xte).to_numpy()).all(), \
-        "test-period values changed the fitted MLP - something leaked"
+        "test-period values changed the fitted MLP"
     print("  [ok] wrecking the test period leaves the fitted MLP bit-identical")
 
 
 def check_same_rows(frame):
-    """8) every model and baseline scored on identical rows. This is what makes
-    the comparison mean anything."""
+    """Every model and baseline is scored on the same rows, and the check
+    itself fails when they aren't."""
     load = frame["load_mw"]
     X, y = build_features(load)
     (Xtr, ytr), (Xva, yva), (Xte, yte) = chronological_split(X, y, VAL_START, TEST_START)
@@ -315,7 +275,7 @@ def check_same_rows(frame):
     except AssertionError:
         print("  [ok] the same-rows check actually fails when rows differ")
     else:
-        raise AssertionError("assert_same_rows passed a mismatched set - it is useless")
+        raise AssertionError("assert_same_rows accepted mismatched rows")
 
 
 def main():

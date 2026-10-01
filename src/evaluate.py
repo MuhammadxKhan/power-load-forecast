@@ -1,19 +1,10 @@
 """
-Baselines, metrics, the scoring table, and the rolling-origin backtest.
+Baselines, metrics, the scoring table, the Diebold-Mariano test and the
+rolling-origin backtest.
 
-Everything that turns predictions into numbers lives here, so every model is
-scored by exactly the same code on exactly the same rows.
-
-The baselines now include a real published benchmark. OPSD ships a day-ahead
-load forecast column derived from ENTSO-E Transparency data, in the same file as
-the demand figures. Seasonal naive tells you whether the model learned anything;
-the published benchmark tells you whether the answer is in the right ballpark.
-
-Be careful how that benchmark is described. It is OPSD's aggregation, not a raw
-untouched TSO series, and the file keeps target timestamps but no forecast
-vintage - so there is no way to know whether a value is the first issuance or a
-later revision. It is published around 10:00 on D-1, the same time as this
-model's default issue time; against the midnight setup it is not like-for-like.
+All scoring goes through this file, so every model is scored by the same code
+on the same rows. Seasonal naive shows whether a model learned anything; the
+published TSO forecast shows whether it is in the right range.
 """
 
 import math
@@ -28,12 +19,10 @@ TZ = "Europe/Berlin"
 # baselines
 # --------------------------------------------------------------------------
 def seasonal_naive(load):
-    """Same hour, same weekday, last week. The one to beat first.
+    """Same hour, same weekday, one week earlier.
 
-    168 rows back is 168 UTC hours, which is the same LOCAL clock hour on every
-    week except the two containing a daylight-saving change - there it lands an
-    hour out. Two weeks a year, left as is because changing it would move the
-    published baseline, but worth knowing it is not exactly "same local hour".
+    168 UTC hours, so in the two weeks with a clock change it lands an hour off
+    the same local hour. Left as is to keep the baseline unchanged.
     """
     return load.shift(168)
 
@@ -43,8 +32,8 @@ def yesterday(load):
 
 
 def two_days_ago(load):
-    """Same hour two days back. "Yesterday" is not out yet at 10:00 on D-1 for
-    most hours of the day, so this is the 10:00 version of that baseline."""
+    """Same hour two days back: the 10:00 replacement for "yesterday", most of
+    which isn't published yet at 10:00 on D-1."""
     return load.shift(48)
 
 
@@ -53,10 +42,8 @@ def mean_last_4_weeks(load):
 
 
 def baseline_preds(frame, index, issue="10am"):
-    """The shift-based baselines plus the official forecast, cut to the scored rows.
-
-    `frame` is what data.load_frame returns: load_mw and benchmark_mw.
-    """
+    """The shift-based baselines plus the published forecast, cut to the scored
+    rows. `frame` is what data.load_frame returns."""
     load = frame["load_mw"]
     out = {"seasonal_naive": seasonal_naive(load).reindex(index),
            "mean_last_4_weeks": mean_last_4_weeks(load).reindex(index)}
@@ -68,8 +55,7 @@ def baseline_preds(frame, index, issue="10am"):
         bench = frame["benchmark_mw"].reindex(index)
         gaps = int(bench.isna().sum())
         if gaps:
-            # never fabricate benchmark values just to keep a column in the
-            # table - drop it and say why
+            # dropped rather than filled, so it is never scored on made-up values
             print(f"  benchmark has {gaps} missing hours in the scored window "
                   f"({gaps / len(index):.2%}) - excluded from the table")
         else:
@@ -93,14 +79,13 @@ def mape(a, b):
 
 
 def bias(y, pred):
-    """Mean signed error. Positive means the forecast runs high. MAE hides this
-    completely - a forecast can have a fine MAE and still be systematically
-    over, which matters if you're buying generation against it."""
+    """Mean signed error, positive when the forecast runs high. MAE can't show
+    a systematic over- or under-forecast; this can."""
     return float(np.mean(pred - y))
 
 
 def skill(y, pred, base):
-    """Fraction of the baseline's error removed. 0 = no better than the baseline."""
+    """Share of the baseline's MAE removed. 0 = no better than the baseline."""
     return 1.0 - mae(y, pred) / mae(y, base)
 
 
@@ -109,14 +94,14 @@ def predict(model, X):
 
 
 def diebold_mariano(y, a, b, lags=7):
-    """Is forecast a's absolute error really different from b's, or is the gap
-    something one test window could produce by chance?
+    """Diebold-Mariano test on absolute errors: is a better than b, or could one
+    test window give this gap by chance? Negative stat means a is better.
+    Returns (stat, two-sided p-value).
 
-    Works on the daily mean of the hourly loss difference. Hours inside a day
-    are strongly correlated, so treating them as 24 separate observations would
-    overstate the evidence; days are much less so, and the Newey-West variance
-    with a week of lags covers what is left. Negative stat means a is better.
-    Returns (stat, two-sided p-value) from the normal approximation.
+    Uses the daily mean of the hourly loss difference, because hours within a
+    day are strongly correlated and counting them separately would overstate
+    the evidence. Newey-West variance with a week of lags covers the remaining
+    day-to-day correlation.
     """
     loss = (a - y).abs() - (b - y).abs()
     daily = loss.groupby(y.index.tz_convert(TZ).date).mean().to_numpy()
@@ -133,9 +118,8 @@ def diebold_mariano(y, a, b, lags=7):
 # scoring
 # --------------------------------------------------------------------------
 def assert_same_rows(y, preds):
-    """Every model and baseline must be scored on the same timestamps, in the
-    same order. If one quietly dropped or reordered rows its MAE is an average
-    over different hours and the table compares nothing."""
+    """Every model and baseline must be scored on the same timestamps in the
+    same order, otherwise the MAEs are averages over different hours."""
     for name, pr in preds.items():
         if len(pr) != len(y):
             raise AssertionError(
@@ -156,13 +140,10 @@ def score_table(y, preds, base="seasonal_naive"):
 
 
 def mae_by_target_hour(y, preds):
-    """Error against the target's local clock hour.
+    """MAE by the target's local clock hour.
 
-    NOT lead-time verification, though an earlier version claimed it was. With
-    one issue time per day, clock hour and horizon are the same variable, so
-    "the forecast decays with horizon" and "afternoon load is harder" are
-    indistinguishable. Real lead-time verification needs the same valid time
-    from several issue times. What it does show is which hours are hard.
+    With one issue time per day, hour of day and forecast horizon are the same
+    thing, so this shows which hours are hard but can't separate the two.
     """
     lead = pd.Index(y.index.tz_convert(TZ).hour, name="local_hour")
     return pd.DataFrame({n: pd.Series((pr - y).abs().to_numpy()).groupby(lead).mean()
@@ -178,21 +159,11 @@ def worst_days(y, pred, n=5):
 # --------------------------------------------------------------------------
 # rolling-origin backtest
 #
-# One train/val/test split gives one number per model and no way to tell whether
-# a gap between two of them is real or just which window you happened to pick.
-# That matters here: on the single split the GBM and the MLP finish about 21 MW
-# apart, under 2%.
-#
-# So walk the origin forward. Each fold trains on everything up to its own
-# cutoff, tunes on the year before its test block, and scores the block. Same
-# protocol as the main run, four times, on four different test periods.
-#
-# Two things this is NOT. Not a significance test - that's a Diebold-Mariano
-# test on the paired errors, accounting for serial correlation, and it isn't
-# done here. And the folds aren't independent trials: they share training data
-# and load is serially correlated, so a fold majority is a stability
-# signal, not four coin flips. A reversal between folds can equally mean
-# genuine regime-dependent performance rather than noise.
+# A single split gives one number per model, and a gap between two models can
+# just be the window. Here each fold trains on everything before its test
+# block, tunes on the year before it, and scores six months; the same protocol
+# as the main run, four times. Folds share training data, so a majority of
+# folds is a stability check, not an independent test.
 # --------------------------------------------------------------------------
 def backtest_folds(index, first_test_start, block_months=6, val_months=12):
     """Expanding-window folds: (val_start, test_start, test_end) per fold."""
@@ -231,7 +202,7 @@ def backtest_run(X, y, models, folds, verbose=True):
         for fit in models:
             fn, info = fit(Xtr, ytr, Xva, yva, Xfit, yfit, verbose=False)
             preds[info["name"]] = fn(Xte)
-        assert_same_rows(yte, preds)   # same guarantee as the main run
+        assert_same_rows(yte, preds)
 
         for name, pr in preds.items():
             rows.append({"fold": k,

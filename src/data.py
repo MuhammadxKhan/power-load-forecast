@@ -1,25 +1,17 @@
 """
-Getting data in. Demand from OPSD, temperature from ERA5. No features here.
+Loads the data: German demand from OPSD, temperature from ERA5.
 
 Two columns come out of the OPSD file:
 
-  load_mw       what demand actually was (the target)
-  benchmark_mw  a published day-ahead load forecast - OPSD's aggregation of
-                ENTSO-E Transparency data, not a raw TSO series. Target
-                timestamps are kept but no forecast vintage, so a value may be
-                a later revision. Under Regulation 543/2013 first publication
-                is due at least two hours before gate closure (~10:00 on D-1
-                for Germany), which is why the model's default issue time is
-                10:00 on D-1 too.
+  load_mw       actual demand (the target)
+  benchmark_mw  the TSOs' published day-ahead load forecast, as aggregated by
+                OPSD from ENTSO-E. It has target timestamps but no publication
+                time, so some values may be later revisions. It is due about
+                two hours before the 12:00 auction, i.e. ~10:00 on D-1.
 
-Temperature is ERA5, ECMWF's reanalysis: their best after-the-fact estimate of
-what the weather was, put together days later. Nobody had it at 10:00 on D-1,
-so it stands in for a forecast here rather than being one. ~31 km native
-resolution on a 0.25 degree grid, hourly.
-
-Germany only. An earlier --country flag applied German holidays to whatever you
-asked for and used a column name OPSD does not have, so it never worked. Adding
-a country needs a column name, a timezone and a holiday list, all three.
+Temperature is ERA5 reanalysis: ECMWF's after-the-fact estimate of what the
+weather was, on a 0.25 degree grid, hourly. It stands in for a forecast here; it
+is not one.
 """
 
 import glob
@@ -28,19 +20,18 @@ import os
 import numpy as np
 import pandas as pd
 
-# Pinned to a dated package, not /latest/. OPSD republishes, and a moving URL
-# means the README's numbers stop reproducing without anyone noticing.
+# A dated release rather than /latest/, so the numbers keep reproducing if OPSD
+# republishes.
 OPSD_VERSION = "2020-10-06"
 OPSD_URL = (f"https://data.open-power-system-data.org/time_series/{OPSD_VERSION}/"
             "time_series_60min_singleindex.csv")
-OPSD_CACHE = "opsd_60min.csv"        # the full 94MB file, gitignored
-OPSD_EXTRACT = "data/de_hourly.csv"  # three columns of it, ~2MB, committed
+OPSD_CACHE = "opsd_60min.csv"        # full 94MB file, gitignored
+OPSD_EXTRACT = "data/de_hourly.csv"  # the three columns used, ~2MB, committed
 
-ERA5_CACHE = "data/era5_temp_de.csv"   # derived national series, small, committable
+ERA5_CACHE = "data/era5_temp_de.csv"   # national hourly series, committed
 ERA5_GLOB = "data/era5_raw/*.nc"       # raw download, ~1GB, gitignored
 
-# A rectangle loosely around Germany. NOT a border - see the note in
-# load_temperature about what that costs.
+# rough box around Germany (it includes sea and neighbouring countries)
 BBOX = {"north": 55.0, "south": 47.0, "west": 5.5, "east": 15.5}
 
 ACTUAL_COL = "DE_load_actual_entsoe_transparency"
@@ -52,10 +43,8 @@ BENCH_COL = "DE_load_forecast_entsoe_transparency"
 # --------------------------------------------------------------------------
 def load_frame():
     """Actual German load and the published benchmark, hourly, indexed by UTC."""
-    # data/de_hourly.csv is three columns pulled out of the full OPSD file and
-    # committed, so cloning the repo is enough to run this - no 94MB download,
-    # no account, nothing. The full-file path below is what generated it and is
-    # kept so the extract is reproducible rather than a magic artefact.
+    # The committed extract is enough to run everything; the full download is
+    # only needed to rebuild it.
     if os.path.exists(OPSD_EXTRACT):
         df = pd.read_csv(OPSD_EXTRACT, parse_dates=["utc_timestamp"])
         df = df.set_index("utc_timestamp")
@@ -69,15 +58,14 @@ def load_frame():
         df = df.rename(columns={ACTUAL_COL: "load_mw", BENCH_COL: "benchmark_mw"})
         os.makedirs(os.path.dirname(OPSD_EXTRACT), exist_ok=True)
         df.to_csv(OPSD_EXTRACT)
-        print(f"Wrote {OPSD_EXTRACT} - commit this and nobody needs the download")
+        print(f"Wrote {OPSD_EXTRACT}")
 
     df.index = pd.DatetimeIndex(df.index).tz_convert("UTC")
 
     s = df["load_mw"]
     df = df.loc[s.first_valid_index():s.last_valid_index()]
 
-    # every hour must exist, or "168 rows back" stops meaning "168 hours back"
-    # and every lag silently misaligns
+    # every hour has to exist, otherwise shift(168) is not "168 hours back"
     df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq="h", tz="UTC"))
 
     missing = int(df["load_mw"].isna().sum())
@@ -86,10 +74,8 @@ def load_frame():
               "filling from earlier values")
     df["load_mw"] = _fill_gaps(df["load_mw"])
 
-    # The benchmark is deliberately NOT filled. Filling it would invent forecast
-    # values nobody ever published and then score models against them. Missing
-    # stays missing; evaluate.py drops the benchmark if the scored window has
-    # holes, and says so.
+    # The benchmark is not filled: that would invent forecasts nobody published.
+    # evaluate.py drops it if the scored window has gaps.
     gaps = int(df["benchmark_mw"].isna().sum())
     if gaps:
         print(f"{gaps} missing benchmark hours ({gaps / len(df):.3%}) - left as NaN")
@@ -99,13 +85,11 @@ def load_frame():
 
 
 def _fill_gaps(s):
-    """Fill interior gaps forward only; a leading gap is filled backwards.
+    """Forward-fill gaps (backward-fill only a leading gap).
 
-    Not interpolate(): linear interpolation fills from both sides, so the value
-    carries information from the future and a lag_24h feature a day later would
-    rest on data 18 hours old. The pinned OPSD package has no missing hours once
-    trimmed, so this changes nothing here - it exists so the code does not
-    depend on the data being clean.
+    Forward fill rather than interpolate(), because interpolation uses the value
+    after the gap, which a lag feature would then be reading from the future.
+    The pinned OPSD release has no gaps once trimmed, so this is a safeguard.
     """
     return s.ffill().bfill()
 
@@ -116,13 +100,9 @@ def _fill_gaps(s):
 def load_temperature(index=None):
     """National hourly 2m temperature in Celsius, indexed by UTC.
 
-    Reads the small derived CSV if it's there, otherwise builds it from the
-    NetCDF in era5_raw/ and writes it out so the slow path happens once.
-
-    A proxy, not a national mean: an unweighted average over a rectangle, so
-    it includes sea and parts of Poland, Czechia, Austria and France, and
-    weights Berlin the same as the North Sea. A land mask is the obvious first
-    fix, population weighting the better one.
+    Reads the committed CSV if present, otherwise builds it from the NetCDF
+    files in era5_raw/. It is an unweighted mean over BBOX, so the North Sea
+    counts as much as Berlin; population weighting would be better.
     """
     if os.path.exists(ERA5_CACHE):
         s = pd.read_csv(ERA5_CACHE, parse_dates=["timestamp"]).set_index("timestamp")["temp_c"]
@@ -136,7 +116,7 @@ def load_temperature(index=None):
                 "needed), or run without --weather.")
         s = _from_netcdf(files)
         s.rename_axis("timestamp").rename("temp_c").to_csv(ERA5_CACHE)
-        print(f"Wrote {ERA5_CACHE} ({len(s):,} hours) - the raw NetCDF isn't needed again")
+        print(f"Wrote {ERA5_CACHE} ({len(s):,} hours)")
 
     s.name = "temp_c"
     if index is not None:
@@ -151,12 +131,9 @@ def load_temperature(index=None):
 def _from_netcdf(files):
     """Average the ERA5 grid down to one number per hour.
 
-    Deliberately NOT xarray.open_mfdataset. That needs dask, which isn't a
-    dependency here, and src/download_era5.py writes one file per year - so the
-    multi-year path died with an ImportError the first time it met real data.
-    The single-file path worked, which is exactly why nobody noticed. Opening
-    each file and reducing it to a 1-D series costs nothing: the spatial mean
-    collapses a year to 8,760 numbers before anything is held.
+    Opens the yearly files one at a time rather than with open_mfdataset, which
+    needs dask. Each file is reduced to a 1-D series straight away, so memory
+    stays small.
     """
     import xarray as xr
 
@@ -164,13 +141,8 @@ def _from_netcdf(files):
     for f in files:
         with xr.open_dataset(f) as ds:
             if "t2m" not in ds:
-                raise KeyError(
-                    f"{f}: no 't2m' variable, found {list(ds.data_vars)}. "
-                    "Refusing to guess - an earlier version silently took the "
-                    "first variable, which would happily average the wrong "
-                    "field and report it as temperature.")
-            # CDS has used both 'time' and 'valid_time' depending on when you
-            # downloaded it
+                raise KeyError(f"{f}: no 't2m' variable, found {list(ds.data_vars)}")
+            # CDS has used both 'time' and 'valid_time' as the time dimension
             tname = "valid_time" if "valid_time" in ds["t2m"].dims else "time"
             space = [d for d in ds["t2m"].dims if d != tname]
             parts.append(ds["t2m"].mean(dim=space).to_series())
@@ -178,12 +150,11 @@ def _from_netcdf(files):
     s = pd.concat(parts).sort_index()
     dupes = int(s.index.duplicated().sum())
     if dupes:
-        # yearly files can overlap at the seam. Say so rather than dropping
-        # silently - a big count means the download is wrong, not the seam.
+        # yearly files can overlap at the boundary
         print(f"{dupes} duplicate ERA5 timestamps, keeping the first of each")
         s = s[~s.index.duplicated(keep="first")]
 
-    s = s - 273.15                            # ERA5 ships Kelvin
+    s = s - 273.15                            # Kelvin to Celsius
     s.index = pd.DatetimeIndex(s.index)
     if s.index.tz is None:
         s.index = s.index.tz_localize("UTC")  # ERA5 timestamps are UTC
@@ -191,11 +162,11 @@ def _from_netcdf(files):
 
 
 # --------------------------------------------------------------------------
-# synthetic, for the self-checks only
+# synthetic data for selfcheck.py
 # --------------------------------------------------------------------------
 def fake_frame(n_days=1500, seed=0):
-    """Synthetic load. Numbers are meaningless - do NOT report them. It exists
-    so the checks run without the download."""
+    """Synthetic load with daily, weekly and yearly cycles, so the checks run
+    without the download. The numbers mean nothing."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2016-01-01", periods=n_days * 24, freq="h", tz="UTC")
     loc = idx.tz_convert("Europe/Berlin")
@@ -206,16 +177,15 @@ def fake_frame(n_days=1500, seed=0):
     yearly = 5000 * np.cos((doy - 15) / 365 * 2 * np.pi)
     load = 50000 + daily + weekly + yearly + rng.normal(0, 900, len(idx))
 
-    # a fake benchmark that's decent but beatable, so the comparison machinery
-    # has something to chew on
+    # a noisy fake benchmark, so the comparison code has something to score
     return pd.DataFrame({"load_mw": load,
                          "benchmark_mw": load + rng.normal(0, 1800, len(idx))},
                         index=idx).rename_axis("timestamp")
 
 
 def fake_temperature(index, seed=0):
-    """Synthetic German-ish temperature: seasonal swing, daily swing, and a slow
-    random wander so consecutive days correlate the way real weather does."""
+    """Synthetic temperature: seasonal and daily cycles plus a slow random
+    wander, so consecutive days are correlated like real weather."""
     rng = np.random.default_rng(seed)
     idx = pd.DatetimeIndex(index)
     loc = idx.tz_convert("Europe/Berlin")

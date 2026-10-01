@@ -1,30 +1,24 @@
 """
-Run ridge, gradient boosting and the MLP on identical ground, against the
-seasonal-naive baseline and a published ENTSO-E-derived day-ahead benchmark.
+Runs ridge, gradient boosting and the MLP against the baselines and the
+published TSO forecast, all on the same features, split and scoring code.
 
     pip install -r requirements.txt
     python run_comparison.py                        # forecast at 10:00 on D-1, no weather
     python run_comparison.py --weather lagged       # temperature measured by 10:00 only
-    python run_comparison.py --weather noisy        # + synthetic temperature error (sensitivity)
-    python run_comparison.py --weather perfect      # perfect prognosis upper bound
+    python run_comparison.py --weather noisy        # + synthetic temperature error
+    python run_comparison.py --weather perfect      # actual temperature, upper bound
     python run_comparison.py --weather noisy --backtest
     python run_comparison.py --weather noisy --seed 7   # a different noise draw
     python run_comparison.py --issue midnight       # the original midnight setup
     python run_comparison.py --holidays national    # without the regional holidays
     python selfcheck.py                             # checks, no download
-
-Identical ground means the features and the split come from src/features.py, so
-every model sees the same columns and rows; every model runs the same protocol
-(small grid on validation, one refit on train+val, one score on test); and every
-model is scored by the same code in src/evaluate.py on the same index, which is
-asserted rather than assumed.
 """
 
 import argparse
 import os
 
 import matplotlib
-matplotlib.use("Agg")            # no display in a plain terminal
+matplotlib.use("Agg")            # no display needed
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -54,9 +48,7 @@ def main():
                    help="rolling-origin folds as well as the single split (slow)")
     p.add_argument("--no-plots", action="store_true")
     p.add_argument("--seed", type=int, default=0,
-                   help="seed for the synthetic error in --weather noisy. The "
-                        "reported effect moves by more than the effect itself, "
-                        "so sweep it rather than trusting one run.")
+                   help="seed for the synthetic error in --weather noisy")
     args = p.parse_args()
 
     os.makedirs(RESULTS, exist_ok=True)
@@ -97,7 +89,7 @@ def main():
     print("\n  chose " + ", ".join(f"{i['name']} {i['params']}" for i in chosen) + "\n")
 
     table = score_table(yte, preds)
-    print("Test-set results (scored once, never tuned on):\n")
+    print("Test-set results:\n")
     print(table.round(3).to_string())
 
     base, best = preds["seasonal_naive"], table.index[0]
@@ -113,11 +105,10 @@ def main():
         if args.issue == "10am":
             print("  Same issue time (~10:00 on D-1). The benchmark's bias is "
                   f"{bias(yte, preds['entsoe_benchmark']):+,.0f} MW, and OPSD keeps no\n"
-                  "  forecast vintage, so some values may be later revisions.")
+                  "  publication times, so some values may be later revisions.")
         else:
-            print("  NOT like-for-like: the benchmark is out by ~10:00 on D-1 and "
-                  "this run assumes\n  midnight, so it has ~14 hours more demand "
-                  "data. Run without --issue midnight.")
+            print("  Not like-for-like: the benchmark is out by ~10:00 on D-1, and "
+                  "this run uses\n  data up to midnight.")
 
     gbm_mae, mlp_mae = mae(yte, preds["gbm"]), mae(yte, preds["mlp"])
     gap = abs(gbm_mae - mlp_mae)
@@ -126,10 +117,10 @@ def main():
     dm, p = diebold_mariano(yte, preds["gbm"], preds["mlp"])
     print(f"  Diebold-Mariano on daily errors: stat {dm:+.2f}, p = {p:.2g}")
     if gap / min(gbm_mae, mlp_mae) < 0.02:
-        print("  Under 2% on one test window - treat that as a tie, not a winner."
-              "\n  Run with --backtest to see whether the ordering is even stable.")
+        print("  Under 2% on one test window - run with --backtest before "
+              "calling a winner.")
 
-    print("\nMAE by local target hour, MW (NOT lead time - see evaluate.py):")
+    print("\nMAE by local target hour, MW:")
     lead = mae_by_target_hour(yte, preds)
     print(lead[[c for c in ("gbm", "mlp", "entsoe_benchmark") if c in lead]]
           .round(0).to_string())
@@ -138,7 +129,7 @@ def main():
     print(worst_days(yte, preds[best]).round(0).to_string())
 
     if args.backtest:
-        print("\nRolling-origin backtest (same protocol, origin walked forward):")
+        print("\nRolling-origin backtest:")
         folds = backtest_folds(X.index, args.test_start, block_months=6)
         tidy = backtest_run(X, y, ALL_MODELS, folds)
         wide, summary = backtest_summary(tidy)
@@ -160,8 +151,7 @@ def main():
 
 def save_backtest(tidy, args):
     """Write the folds to results/backtest.csv, replacing only the rows for this
-    setup, so the none and noisy runs sit side by side instead of the second
-    one overwriting the first."""
+    setup, so runs with different settings are kept side by side."""
     path = os.path.join(RESULTS, "backtest.csv")
     tidy = tidy.copy()
     for col in ("holidays", "issue", "weather"):
@@ -188,12 +178,8 @@ def _save(fig, name):
 
 
 def plot_actual_vs_forecast(y, preds, days=7, start=None):
-    """One week of actual demand with the forecasts on top.
-
-    The table says the GBM is off by ~1,200 MW on average. This says what that
-    looks like: whether it's tracking the shape and sitting slightly off, or
-    missing the peaks, which are very different problems.
-    """
+    """One week of actual demand with the forecasts on top, to see whether the
+    errors are a level offset or missed peaks."""
     idx = y.index.tz_convert(TZ)
     start = pd.Timestamp(start, tz=TZ) if start else idx[0]
     m = (idx >= start) & (idx < start + pd.Timedelta(days=days))
@@ -211,12 +197,8 @@ def plot_actual_vs_forecast(y, preds, days=7, start=None):
 
 
 def plot_error_by_target_hour(y, preds):
-    """MAE against the target's local clock hour.
-
-    Not lead time - with one midnight origin the two are the same variable, so
-    this cannot separate horizon decay from "afternoon is hard". It is still
-    worth plotting: it shows which hours cost you the most.
-    """
+    """MAE by the target's local hour (with one issue time per day this is also
+    the horizon, so the two can't be separated)."""
     tbl = mae_by_target_hour(y, preds)
     keep = [c for c in ("gbm", "mlp", "ridge", "entsoe_benchmark", "seasonal_naive")
             if c in tbl]
@@ -232,12 +214,8 @@ def plot_error_by_target_hour(y, preds):
 
 
 def plot_load_vs_temperature(y, temp):
-    """Demand against temperature - the reason weather belongs in the model.
-
-    Expect a V: heating demand at the cold end, cooling at the warm end, minimum
-    somewhere in the middle. A straight line cannot fit that shape, which is why
-    the heating/cooling degree-hour features exist.
-    """
+    """Hourly demand against temperature, coloured by hour, with the mean in
+    each temperature bin."""
     t = temp.reindex(y.index)
     hour = y.index.tz_convert(TZ).hour
 
@@ -255,8 +233,7 @@ def plot_load_vs_temperature(y, temp):
 
 
 def plot_worst_days(y, preds, n=12):
-    """The days the model got most wrong, ranked. Where the model breaks is
-    usually more informative than where it works."""
+    """The days with the largest mean error."""
     name = "gbm" if "gbm" in preds else list(preds)[0]
     err = (preds[name] - y).abs()
     daily = err.groupby(y.index.tz_convert(TZ).date).mean().sort_values(ascending=False)
